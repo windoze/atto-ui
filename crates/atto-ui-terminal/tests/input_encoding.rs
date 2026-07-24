@@ -233,6 +233,40 @@ fn button_code(button: MouseButton) -> u16 {
 }
 
 #[test]
+fn terminal_utf8_mouse_encoding_uses_multibyte_for_large_coordinates() {
+    // DECSET 1005 (UTF-8 mouse encoding) must UTF-8-encode field values > 127
+    // as multiple bytes, not clamp them into one byte like legacy X10. On a wide
+    // terminal a click past column ~95 produces such a value.
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    // Wide enough that column 200 is on-screen.
+    assert!(handle.resize(24, 240));
+    // Enable button-event tracking (1002) + UTF-8 encoding (1005).
+    handle.process_output_str("\x1b[?1002h\x1b[?1005h");
+
+    let event = mouse_event_at(
+        MouseEventKind::Down(MouseButton::Left),
+        200,
+        3,
+        KeyModifiers::NONE,
+    );
+    let bytes = {
+        terminal.handle_event(&Event::Mouse(event), context(&Theme::dark()));
+        handle.take_input()
+    };
+
+    // cb = 0 + 32 = 32 (single byte). x = 200 + 1 + 32 = 233 → U+00E9 → 0xC3 0xA9.
+    // y = 3 + 1 + 32 = 36 (single byte).
+    let mut expected = vec![0x1b, b'[', b'M', 32];
+    let mut buf = [0u8; 4];
+    expected.extend_from_slice('\u{00E9}'.encode_utf8(&mut buf).as_bytes());
+    expected.push(36);
+    assert_eq!(bytes, expected);
+    // The x field must be two bytes here — a clamped single byte would be a bug.
+    assert!(bytes.len() > 6);
+}
+
+#[test]
 fn terminal_mouse_encoding_matrix_covers_protocol_encoding_and_modifiers() {
     let protocols = [
         MouseProtocol::PressRelease,
@@ -1120,6 +1154,40 @@ fn terminal_main_screen_wheel_stays_on_local_scrollback() {
 }
 
 #[test]
+fn terminal_large_scroll_step_wheel_does_not_panic() {
+    // A scroll step near u16::MAX previously overflowed `step as i16` (and
+    // negating i16::MIN panics in debug). Scrolling must stay well-defined and
+    // clamp to the available scrollback.
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new()
+        .scrollback_len(20)
+        .scroll_step(u16::MAX);
+    let handle = terminal.handle();
+    let output = (0..40)
+        .map(|line| format!("line-{line:02}\r\n"))
+        .collect::<String>();
+    handle.process_output_str(&output);
+    let live_offset = terminal.scroll_offset().1;
+
+    // Scroll up (into history) then back down; neither may panic.
+    let up = terminal.handle_event(
+        &Event::Mouse(mouse_event(MouseEventKind::ScrollUp, KeyModifiers::NONE)),
+        context(&theme),
+    );
+    assert!(up.is_consumed());
+    // A huge step scrolls all the way into history (clamped, no overflow).
+    assert!(terminal.scroll_offset().1 < live_offset);
+
+    let down = terminal.handle_event(
+        &Event::Mouse(mouse_event(MouseEventKind::ScrollDown, KeyModifiers::NONE)),
+        context(&theme),
+    );
+    assert!(down.is_consumed());
+    // Scrolled all the way back to the live view.
+    assert_eq!(terminal.scroll_offset().1, live_offset);
+}
+
+#[test]
 fn terminal_prefix_escape_dispatches_single_literal_prefix() {
     assert_eq!(
         component_key_input(&[ctrl_key('b'), ctrl_key('b')]),
@@ -1150,6 +1218,25 @@ fn terminal_prefix_key_can_be_configured_to_plain_ctrl_letter() {
             ],
         ),
         b"\x02\x01x"
+    );
+}
+
+#[test]
+fn terminal_ctrl_space_sends_nul() {
+    // Ctrl+Space (and Ctrl+@) send NUL (0x00), matching xterm.
+    assert_eq!(
+        key_event_input_after_output(
+            "",
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        ),
+        b"\x00"
+    );
+    assert_eq!(
+        key_event_input_after_output(
+            "",
+            KeyEvent::new(KeyCode::Char('@'), KeyModifiers::CONTROL)
+        ),
+        b"\x00"
     );
 }
 

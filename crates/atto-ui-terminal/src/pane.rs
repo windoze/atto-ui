@@ -5,6 +5,7 @@
 //! owns the pane tree, pane focus, and pane-level prefix commands.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Result, anyhow, bail};
 use atto_ui::composable::{
@@ -34,6 +35,17 @@ impl TerminalPaneId {
     /// Returns the numeric pane id for display and tests.
     pub const fn raw(self) -> u64 {
         self.0
+    }
+
+    /// Allocates a globally-unique pane id.
+    ///
+    /// Pane ids must be unique across *all* pane groups in the process, not
+    /// just within one group: the IPC layer ([`crate::TerminalPaneIpc`])
+    /// addresses panes by a bare id and treats collisions as ambiguous. A
+    /// process-wide monotonic counter (like tmux's `%N`) guarantees that.
+    fn allocate() -> Self {
+        static NEXT_PANE_ID: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT_PANE_ID.fetch_add(1, Ordering::Relaxed))
     }
 }
 
@@ -92,7 +104,6 @@ struct TerminalPaneGroupShared {
     panes: Vec<TerminalPane>,
     tree: Option<TerminalPaneNode>,
     active_id: Option<TerminalPaneId>,
-    next_id: u64,
     prefix_shortcut: TerminalShortcut,
     last_error: Option<String>,
     last_area: Option<Rect>,
@@ -107,7 +118,6 @@ impl Default for TerminalPaneGroupShared {
             panes: Vec::new(),
             tree: None,
             active_id: None,
-            next_id: 1,
             prefix_shortcut: TerminalConfig::default()
                 .prefix_shortcut()
                 .expect("default terminal prefix shortcut must be valid"),
@@ -396,7 +406,6 @@ impl TerminalPaneGroupShared {
             panes: vec![initial],
             tree: Some(TerminalPaneNode::Leaf(first_id)),
             active_id: Some(first_id),
-            next_id: first_id.raw().saturating_add(1),
             ..Self::default()
         }
     }
@@ -506,7 +515,7 @@ impl TerminalPaneGroupShared {
         if self.pane_index(pane_id).is_none() {
             bail!("pane {} does not exist", pane_id.raw());
         }
-        let new_id = TerminalPaneId(self.next_id);
+        let new_id = TerminalPaneId::allocate();
         let pane_number = self.panes.len().saturating_add(1);
         let terminal = match self.create_terminal_for_new_pane(pane_number) {
             Ok(terminal) => terminal,
@@ -521,7 +530,6 @@ impl TerminalPaneGroupShared {
         if !tree.split_leaf(pane_id, new_id, direction) {
             bail!("pane {} is not present in the pane tree", pane_id.raw());
         }
-        self.next_id = self.next_id.saturating_add(1);
         self.panes.push(TerminalPane::new(new_id, terminal));
         self.focus_pane(new_id, true);
         self.refresh_layouts_from_last_area();
@@ -611,6 +619,27 @@ impl TerminalPaneGroupShared {
             .map(|layout| layout.id)
     }
 
+    /// Returns the surviving pane whose layout center is closest to `source`'s,
+    /// used to transfer focus spatially when a pane is closed.
+    fn nearest_pane_to(&self, source: TerminalPaneId) -> Option<TerminalPaneId> {
+        let layouts = if let Some(area) = self.last_area {
+            self.full_layouts_for_area(area).0
+        } else {
+            self.last_layouts.clone()
+        };
+        let source_center = rect_center(layouts.iter().find(|l| l.id == source)?.rect);
+        layouts
+            .iter()
+            .filter(|layout| layout.id != source)
+            .min_by_key(|layout| {
+                let c = rect_center(layout.rect);
+                let dx = c.0.abs_diff(source_center.0);
+                let dy = c.1.abs_diff(source_center.1);
+                dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy))
+            })
+            .map(|layout| layout.id)
+    }
+
     fn break_pane(&mut self, pane_id: TerminalPaneId) -> Result<TerminalPaneBreakOutcome> {
         let Some((pane, rect)) = self.remove_pane(pane_id)? else {
             bail!("cannot break the last pane in a group");
@@ -647,6 +676,19 @@ impl TerminalPaneGroupShared {
             bail!("cannot break the last pane in a group");
         };
         self.tree = Some(next_tree);
+
+        let removing_active = self.active_id == Some(pane_id);
+        // Preserve the outgoing active pane's capture state so closing a pane
+        // doesn't silently flip the survivor back into capture mode.
+        let preserved_capture = removing_active
+            .then(|| self.panes[index].handle.capture())
+            .unwrap_or(true);
+        // Pick the spatially-nearest surviving pane to inherit focus, rather
+        // than always jumping to the first-created pane.
+        let successor = removing_active
+            .then(|| self.nearest_pane_to(pane_id))
+            .flatten();
+
         let pane = self.panes.remove(index);
         let rect = self
             .last_layouts
@@ -657,11 +699,14 @@ impl TerminalPaneGroupShared {
         if self.zoomed_pane_id == Some(pane_id) {
             self.zoomed_pane_id = None;
         }
-        if self.active_id == Some(pane_id) {
-            self.active_id = self.panes.first().map(|pane| pane.id);
-        }
-        if let Some(active_id) = self.active_id {
-            self.focus_pane(active_id, true);
+        if removing_active {
+            // Fall back to the first remaining pane only if no spatial neighbor
+            // was found (e.g. layouts not yet computed).
+            let next = successor.or_else(|| self.panes.first().map(|pane| pane.id));
+            self.active_id = next;
+            if let Some(active_id) = next {
+                self.focus_pane(active_id, preserved_capture);
+            }
         }
         self.refresh_layouts_from_last_area();
         Ok(Some((pane, rect)))
@@ -678,7 +723,7 @@ pub struct TerminalPaneGroup {
 impl TerminalPaneGroup {
     /// Creates a pane group with one initial terminal pane.
     pub fn new(initial: TerminalEmulator) -> Self {
-        let first_id = TerminalPaneId(1);
+        let first_id = TerminalPaneId::allocate();
         let pane = TerminalPane::new(first_id, initial);
         let shared = Arc::new(Mutex::new(TerminalPaneGroupShared::new(pane)));
         let prefix_shortcut = shared.lock().prefix_shortcut;
@@ -694,6 +739,23 @@ impl TerminalPaneGroup {
         TerminalPaneGroupHandle {
             shared: Arc::clone(&self.shared),
         }
+    }
+
+    /// Grants mutable access to the active pane's terminal, returning the
+    /// closure's result.
+    ///
+    /// Pane ids are allocated when the group is created, so callers that need
+    /// the terminal's `$TMUX_PANE` (or any other id-dependent setup) to match
+    /// the pane id must create the group first and then configure/spawn the
+    /// initial terminal through this method. Returns `None` when the group has
+    /// no active pane.
+    pub fn with_active_terminal_mut<R>(
+        &mut self,
+        f: impl FnOnce(&mut TerminalEmulator) -> R,
+    ) -> Option<R> {
+        let mut shared = self.shared.lock();
+        let index = shared.active_pane_index()?;
+        Some(f(&mut shared.panes[index].terminal))
     }
 
     /// Configures the shortcut used for pane-level prefix commands.
@@ -1401,18 +1463,20 @@ mod tests {
             shared.refresh_layouts_from_last_area();
         }
 
-        handle
+        let left_id = handle.panes()[0].id;
+        let split = handle
             .split_window(None, TerminalPaneSplit::Vertical)
             .expect("split right");
+        let right_id = split.new_pane_id;
         let before = handle.panes();
         let left_before = before
             .iter()
-            .find(|pane| pane.id == TerminalPaneId::from_raw(1))
+            .find(|pane| pane.id == left_id)
             .and_then(|pane| pane.rect)
             .expect("left rect before resize");
         let right_before = before
             .iter()
-            .find(|pane| pane.id == TerminalPaneId::from_raw(2))
+            .find(|pane| pane.id == right_id)
             .and_then(|pane| pane.rect)
             .expect("right rect before resize");
 
@@ -1426,12 +1490,12 @@ mod tests {
         let after = handle.panes();
         let left_after = after
             .iter()
-            .find(|pane| pane.id == TerminalPaneId::from_raw(1))
+            .find(|pane| pane.id == left_id)
             .and_then(|pane| pane.rect)
             .expect("left rect after resize");
         let right_after = after
             .iter()
-            .find(|pane| pane.id == TerminalPaneId::from_raw(2))
+            .find(|pane| pane.id == right_id)
             .and_then(|pane| pane.rect)
             .expect("right rect after resize");
         assert_eq!(left_after.width, left_before.width.saturating_sub(1));
@@ -1448,23 +1512,25 @@ mod tests {
             shared.last_area = Some(area);
             shared.refresh_layouts_from_last_area();
         }
-        handle
+        let left_id = handle.panes()[0].id;
+        let split = handle
             .split_window(None, TerminalPaneSplit::Vertical)
             .expect("split right");
+        let right_id = split.new_pane_id;
 
         assert!(group.shared.lock().toggle_zoom_active_pane());
         let zoomed = handle.panes();
         assert_eq!(
             zoomed
                 .iter()
-                .find(|pane| pane.id == TerminalPaneId::from_raw(2))
+                .find(|pane| pane.id == right_id)
                 .and_then(|pane| pane.rect),
             Some(area)
         );
         assert_eq!(
             zoomed
                 .iter()
-                .find(|pane| pane.id == TerminalPaneId::from_raw(1))
+                .find(|pane| pane.id == left_id)
                 .and_then(|pane| pane.rect),
             None
         );
@@ -1486,17 +1552,96 @@ mod tests {
             shared.last_area = Some(Rect::new(0, 0, 21, 8));
             shared.refresh_layouts_from_last_area();
         }
+        let left_id = handle.panes()[0].id;
         let split = handle
             .split_window(None, TerminalPaneSplit::Vertical)
             .expect("split right");
-        assert_eq!(split.new_pane_id, TerminalPaneId::from_raw(2));
+        assert_ne!(split.new_pane_id, left_id);
         assert!(group.shared.lock().close_active_pane());
 
         let panes = handle.panes();
         assert_eq!(panes.len(), 1);
-        assert_eq!(panes[0].id, TerminalPaneId::from_raw(1));
+        assert_eq!(panes[0].id, left_id);
         assert!(panes[0].is_active);
         assert_eq!(panes[0].rect, Some(Rect::new(0, 0, 21, 8)));
+    }
+
+    #[test]
+    fn closing_non_active_pane_preserves_active_focus_and_capture() {
+        let group = TerminalPaneGroup::new(TerminalEmulator::new());
+        let handle = group.handle();
+        {
+            let mut shared = group.shared.lock();
+            shared.last_area = Some(Rect::new(0, 0, 40, 10));
+            shared.refresh_layouts_from_last_area();
+        }
+        let first_id = handle.panes()[0].id;
+        let split = handle
+            .split_window(Some(first_id), TerminalPaneSplit::Vertical)
+            .expect("split");
+        let second_id = split.new_pane_id;
+
+        // Make the first pane active and explicitly non-capturing.
+        {
+            let mut shared = group.shared.lock();
+            shared.focus_pane(first_id, false);
+        }
+        let active_handle = handle
+            .panes()
+            .into_iter()
+            .find(|p| p.id == first_id)
+            .expect("first pane")
+            .handle;
+        assert!(!active_handle.capture());
+
+        // Close the *other* (non-active) pane.
+        group.shared.lock().close_pane(second_id).expect("close");
+
+        // Active pane is unchanged and its non-capturing state is preserved.
+        let panes = handle.panes();
+        assert_eq!(panes.len(), 1);
+        assert_eq!(panes[0].id, first_id);
+        assert!(panes[0].is_active);
+        assert!(
+            !panes[0].handle.capture(),
+            "closing an unrelated pane must not force the active pane into capture mode"
+        );
+    }
+
+    #[test]
+    fn closing_active_pane_transfers_focus_to_spatial_neighbor() {
+        // Layout: three panes split left-to-right. Closing the middle pane
+        // should move focus to an adjacent pane, not always to the first.
+        let group = TerminalPaneGroup::new(TerminalEmulator::new());
+        let handle = group.handle();
+        {
+            let mut shared = group.shared.lock();
+            shared.last_area = Some(Rect::new(0, 0, 60, 10));
+            shared.refresh_layouts_from_last_area();
+        }
+        let left_id = handle.panes()[0].id;
+        let mid = handle
+            .split_window(Some(left_id), TerminalPaneSplit::Vertical)
+            .expect("split mid");
+        let mid_id = mid.new_pane_id;
+        let right = handle
+            .split_window(Some(mid_id), TerminalPaneSplit::Vertical)
+            .expect("split right");
+        let right_id = right.new_pane_id;
+
+        // Focus the middle pane, then close it.
+        {
+            let mut shared = group.shared.lock();
+            shared.focus_pane(mid_id, true);
+        }
+        group.shared.lock().close_pane(mid_id).expect("close mid");
+
+        let active = handle.active_pane_id().expect("an active pane remains");
+        assert_ne!(active.raw(), mid_id.raw());
+        assert!(
+            active.raw() == left_id.raw() || active.raw() == right_id.raw(),
+            "focus should move to a spatial neighbor of the closed pane"
+        );
     }
 
     #[test]

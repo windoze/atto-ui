@@ -94,14 +94,54 @@ fn wait_for_last_text_position(host: &PtyTestHost, needle: &str) -> (u16, u16) {
 }
 
 fn replace_settings_textbox(host: &mut PtyTestHost, title: &str, value: &str) {
-    let (x, y) = wait_for_last_text_position(host, title);
-    host.click(x.saturating_add(1), y.saturating_add(1))
-        .unwrap_or_else(|e| panic!("click textbox {title:?}: {e}"));
-    thread::sleep(Duration::from_millis(40));
-    host.send_ctrl('u')
-        .unwrap_or_else(|e| panic!("clear textbox {title:?}: {e}"));
-    host.send_str(value)
-        .unwrap_or_else(|e| panic!("type textbox {title:?}: {e}"));
+    replace_settings_textbox_scrolled(host, title, value, None);
+}
+
+/// Focuses a settings textbox (labelled `title`) and replaces its contents with
+/// `value`.
+///
+/// Clicking to focus a textbox can silently fail to register when the field
+/// sits on the scroll-viewport edge, and a field's input row may render just
+/// below a label that scrolled in at the bottom. When `wheel` is
+/// `Some((x, y, below))` the window is scrolled until a marker `below` (which
+/// renders beneath the field) is visible, guaranteeing the field itself is
+/// seated inside the viewport rather than on the bottom edge. The click + type
+/// is then retried in place until the typed value is visible on screen.
+fn replace_settings_textbox_scrolled(
+    host: &mut PtyTestHost,
+    title: &str,
+    value: &str,
+    wheel: Option<(u16, u16, &str)>,
+) {
+    // Seat the field away from the scroll boundary first, if requested, by
+    // scrolling until a marker below the field is visible.
+    if let Some((wx, wy, below)) = wheel {
+        wheel_down_until_text(host, wx, wy, title);
+        wheel_down_until_text(host, wx, wy, below);
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let (x, y) = wait_for_last_text_position(host, title);
+        host.click(x.saturating_add(1), y.saturating_add(1))
+            .unwrap_or_else(|e| panic!("click textbox {title:?}: {e}"));
+        thread::sleep(Duration::from_millis(40));
+        host.send_ctrl('u')
+            .unwrap_or_else(|e| panic!("clear textbox {title:?}: {e}"));
+        host.send_str(value)
+            .unwrap_or_else(|e| panic!("type textbox {title:?}: {e}"));
+        thread::sleep(Duration::from_millis(40));
+
+        if host.screen_contents().unwrap_or_default().contains(value) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "typing {value:?} into textbox {title:?} did not take effect\n--- screen ---\n{}",
+                host.screen_contents().unwrap_or_default()
+            );
+        }
+    }
 }
 
 fn wheel_down_until_text(host: &mut PtyTestHost, x: u16, y: u16, needle: &str) {
@@ -120,7 +160,65 @@ fn wheel_down_until_text(host: &mut PtyTestHost, x: u16, y: u16, needle: &str) {
     );
 }
 
+/// Scrolls a scrollable window (via the wheel at `(x, y)`) until its content
+/// stops changing — i.e. it has reached the bottom. Returns once two
+/// consecutive reads are identical, so a button on the last page is seated
+/// inside the viewport rather than clipped at the scroll boundary (clicking a
+/// row on the exact viewport edge does not reliably hit the widget).
+fn wheel_to_bottom(host: &mut PtyTestHost, x: u16, y: u16) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut previous = host.screen_contents().unwrap_or_default();
+    while Instant::now() < deadline {
+        host.wheel_down(x, y).expect("wheel down");
+        thread::sleep(Duration::from_millis(20));
+        let current = host.screen_contents().unwrap_or_default();
+        if current == previous {
+            return;
+        }
+        previous = current;
+    }
+}
+
+/// Clicks a labelled button inside the scrollable settings window robustly:
+/// scrolls the label into view, scrolls to the bottom so the button is not on
+/// the viewport edge, then clicks its centre and retries (re-clicking) until
+/// `settled` observes the effect. Fixes flakiness where a single edge-clipped
+/// click silently failed to register.
+fn click_settings_button(
+    host: &mut PtyTestHost,
+    wheel_x: u16,
+    wheel_y: u16,
+    label: &str,
+    mut settled: impl FnMut(&PtyTestHost) -> bool,
+) {
+    wheel_down_until_text(host, wheel_x, wheel_y, label);
+    wheel_to_bottom(host, wheel_x, wheel_y);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let screen = host.screen_contents().unwrap_or_default();
+        let (bx, by) = find_text_position(&screen, label).unwrap_or_else(|| {
+            panic!("expected button {label:?} to be visible\n--- screen ---\n{screen}")
+        });
+        // Click the middle of the label so we land on the button body.
+        let cx = bx + (UnicodeWidthStr::width(label) as u16) / 2;
+        host.click(cx, by).unwrap_or_else(|e| panic!("click {label:?}: {e}"));
+        thread::sleep(Duration::from_millis(40));
+        if settled(host) {
+            return;
+        }
+    }
+    panic!(
+        "clicking {label:?} did not take effect\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    );
+}
+
 fn wait_for_file(path: &std::path::Path) {
+    wait_for_file_with_screen(path, None);
+}
+
+fn wait_for_file_with_screen(path: &std::path::Path, host: Option<&PtyTestHost>) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         if path.exists() {
@@ -128,7 +226,13 @@ fn wait_for_file(path: &std::path::Path) {
         }
         thread::sleep(Duration::from_millis(20));
     }
-    panic!("expected file {} to be written", path.display());
+    let screen = host
+        .map(|h| h.screen_contents().unwrap_or_default())
+        .unwrap_or_default();
+    panic!(
+        "expected file {} to be written\n--- screen ---\n{screen}",
+        path.display()
+    );
 }
 
 /// Writes a default `TerminalConfig` to a fresh temp file and returns
@@ -318,6 +422,40 @@ fn click_file_menu_item(host: &mut PtyTestHost, label: &str) {
     host.click(1, 0).expect("open File menu");
     let (x, y) = wait_for_text_position(host, label);
     host.click(x, y).expect("click File menu item");
+}
+
+/// Opens the File menu and clicks the given dropdown item, ignoring occurrences
+/// of the label elsewhere on screen (e.g. terminal banner text that mentions the
+/// same word). The dropdown item is matched on a line whose trimmed content is
+/// exactly the label, which the menu renders on the far left.
+fn click_file_dropdown_item(host: &mut PtyTestHost, label: &str) {
+    host.click(1, 0).expect("open File menu");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let screen = host.screen_contents().unwrap_or_default();
+        for (row, line) in screen.lines().enumerate() {
+            // Menu items render as a short left-aligned label; skip lines that
+            // merely contain the word as part of other text.
+            if let Some(byte_idx) = line.find(label) {
+                // A dropdown item begins at the menu's left border, so nothing
+                // but decoration/whitespace precedes it. The banner text
+                // ("File > Settings: ...") has real words before the label and
+                // is thus skipped.
+                let before = line[..byte_idx].trim_start_matches(['░', '│', '┃', ' ', '║']);
+                if before.is_empty() {
+                    let col = UnicodeWidthStr::width(&line[..byte_idx]) as u16;
+                    host.click(col, row as u16).expect("click dropdown item");
+                    return;
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "menu item {label:?} not found in dropdown\n--- screen ---\n{screen}"
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[test]
@@ -1102,13 +1240,11 @@ fn pty_terminal_file_menu_opens_settings_window_and_saves_config() {
     click_file_menu_item(&mut host, "Settings");
     wait_for_text(&host, "Terminal Settings");
     wait_for_text(&host, "Scrollback rows");
-    wheel_down_until_text(&mut host, 50, 16, "Palette");
-    wheel_down_until_text(&mut host, 50, 16, "Session");
-    wheel_down_until_text(&mut host, 50, 16, "Close window on shell exit");
-    wheel_down_until_text(&mut host, 50, 16, "Save");
 
-    let (save_x, save_y) = wait_for_text_position(&host, "Save");
-    host.click(save_x, save_y).expect("click save");
+    let config_path_for_click = config_path.clone();
+    click_settings_button(&mut host, 50, 16, "Save", move |_| {
+        config_path_for_click.exists()
+    });
     wait_for_file(&config_path);
 
     host.send_ctrl('q').expect("quit");
@@ -1152,13 +1288,22 @@ fn pty_terminal_settings_apply_save_and_reload_runtime_config() {
 
     replace_settings_textbox(&mut host, "Scrollback", "13");
     replace_settings_textbox(&mut host, "Ctrl+letter", "ctrl+a");
-    wheel_down_until_text(&mut host, 60, 18, "ANSI palette");
-    replace_settings_textbox(&mut host, "Color", "#12ab34");
-    wheel_down_until_text(&mut host, 60, 18, "Save");
+    // The Color box shares the (tall) palette row, so it can render just below
+    // the viewport edge. Scroll until "Working directory" (a Session field below
+    // the palette) is visible, which guarantees the Color box is seated well
+    // inside the viewport rather than clipped at the bottom edge.
+    replace_settings_textbox_scrolled(
+        &mut host,
+        "Color",
+        "#12ab34",
+        Some((60, 18, "Working directory")),
+    );
 
-    let (save_x, save_y) = wait_for_text_position(&host, "Save");
-    host.click(save_x, save_y).expect("click save");
-    wait_for_file(&config_path);
+    let config_path_for_click = config_path.clone();
+    click_settings_button(&mut host, 60, 18, "Save", move |_| {
+        config_path_for_click.exists()
+    });
+    wait_for_file_with_screen(&config_path, Some(&host));
     wait_for_text(&host, "CFG_SCROLL=13 CFG_PREFIX=ctrl+a CFG_ANSI0=#12ab34");
 
     host.send_str("\x1b").expect("close settings");
@@ -1592,25 +1737,18 @@ fn repro_viewer_checkbox_click_hangs() {
     let cfg_arg = cfg.to_string_lossy().into_owned();
     let bin = env!("CARGO_BIN_EXE_terminal_viewer");
     let mut host = PtyTestHost::spawn(bin, &["--config", &cfg_arg], 110, 34).expect("spawn viewer");
-    thread::sleep(Duration::from_millis(800));
+    // Wait for the app banner rather than sleeping a fixed interval.
+    wait_for_text(&host, "Terminal Emulator");
 
-    host.click(1, 0).ok(); // File menu
-    thread::sleep(Duration::from_millis(200));
-    let m = host.screen_contents().unwrap_or_default();
-    let (sx, sy) = find_text_position(&m, "Settings").expect("find Settings");
-    host.click(sx, sy).ok();
-    thread::sleep(Duration::from_millis(400));
-    for _ in 0..30 {
-        host.wheel_down(55, 16).ok();
-        thread::sleep(Duration::from_millis(20));
-        if host
-            .screen_contents()
-            .unwrap_or_default()
-            .contains("Close window on shell exit")
-        {
-            break;
-        }
-    }
+    // Open File > Settings, waiting for each step instead of racing fixed sleeps.
+    // Use the dropdown-specific helper: the terminal banner also contains the
+    // word "Settings", which would confuse a plain text search.
+    click_file_dropdown_item(&mut host, "Settings");
+    wait_for_text(&host, "Terminal Settings");
+    wheel_down_until_text(&mut host, 55, 16, "Close window on shell exit");
+    // Seat the checkbox off the viewport edge so the click reliably registers.
+    wheel_to_bottom(&mut host, 55, 16);
+
     let sc = host.screen_contents().unwrap_or_default();
     let mut clicked = false;
     for (row, line) in sc.lines().enumerate() {
@@ -1618,13 +1756,11 @@ fn repro_viewer_checkbox_click_hangs() {
             && let Some(br) = line[..li].rfind('[')
         {
             let col = UnicodeWidthStr::width(&line[..br]) as u16 + 1;
-            eprintln!("MOUSE-CLICK checkbox glyph at {col},{row}");
             host.click(col, row as u16).ok();
             clicked = true;
         }
     }
     assert!(clicked, "no glyph found\n{sc}");
-    thread::sleep(Duration::from_millis(300));
 
     // Responsiveness probe: send quit and REQUIRE clean exit within 3s.
     host.send_ctrl('q').ok();

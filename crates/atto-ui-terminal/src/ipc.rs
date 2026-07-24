@@ -228,7 +228,11 @@ fn terminal_select_direction(direction: PaneSelectDirection) -> TerminalPaneSele
 }
 
 fn pane_control_error(error: anyhow::Error) -> ComponentError {
-    ComponentError::invalid_value("pane", error.to_string())
+    // Split/select/break failures are operation failures (e.g. "cannot break
+    // the last pane", "pane tree is empty"), not a bad value on some "pane"
+    // argument — report them as such rather than as an invalid-value error on a
+    // field that does not exist in the protocol params.
+    ComponentError::action_not_supported(error.to_string())
 }
 
 fn add_detached_pane_window(
@@ -327,5 +331,42 @@ fn default_popup_rect(screen: Rect) -> Rect {
         y: work.y + work.height.saturating_sub(height) / 2,
         width,
         height,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TerminalPaneGroup;
+
+    #[test]
+    fn pane_ids_are_unique_across_groups() {
+        let group_a = TerminalPaneGroup::new(TerminalEmulator::new());
+        let group_b = TerminalPaneGroup::new(TerminalEmulator::new());
+        let id_a = group_a.handle().active_pane_id().expect("group a active");
+        let id_b = group_b.handle().active_pane_id().expect("group b active");
+        assert_ne!(
+            id_a.raw(),
+            id_b.raw(),
+            "pane ids must be globally unique so IPC addressing is unambiguous"
+        );
+    }
+
+    #[test]
+    fn find_pane_and_resolve_group_work_with_multiple_groups() {
+        let group_a = TerminalPaneGroup::new(TerminalEmulator::new());
+        let group_b = TerminalPaneGroup::new(TerminalEmulator::new());
+        let handle_a = group_a.handle();
+        let handle_b = group_b.handle();
+        let id_a = handle_a.active_pane_id().expect("group a active").raw();
+        let id_b = handle_b.active_pane_id().expect("group b active").raw();
+
+        let ipc = TerminalPaneIpc::from_groups([handle_a, handle_b]);
+
+        // Both panes are addressable despite two groups being registered.
+        assert_eq!(ipc.find_pane(id_a).expect("find a").id.raw(), id_a);
+        assert_eq!(ipc.find_pane(id_b).expect("find b").id.raw(), id_b);
+        assert!(ipc.resolve_group(Some(id_a)).is_ok());
+        assert!(ipc.resolve_group(Some(id_b)).is_ok());
     }
 }

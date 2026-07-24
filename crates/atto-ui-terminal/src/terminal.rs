@@ -323,6 +323,26 @@ mod tests {
     }
 
     #[test]
+    fn dsr_tail_is_capped_against_unterminated_csi() {
+        let mut shared = test_shared();
+
+        // An unterminated CSI followed by an unbounded run of digits must not be
+        // buffered without limit across chunks.
+        let mut chunk = Vec::from(&b"\x1b["[..]);
+        chunk.extend(std::iter::repeat_n(b'9', 4096));
+        assert!(collect_dsr_responses(&mut shared, &chunk).is_empty());
+        assert!(
+            shared.dsr_tail.len() <= DSR_TAIL_MAX,
+            "dsr_tail grew to {} bytes",
+            shared.dsr_tail.len()
+        );
+
+        // Feeding another chunk keeps it bounded rather than accumulating.
+        assert!(collect_dsr_responses(&mut shared, &chunk).is_empty());
+        assert!(shared.dsr_tail.len() <= DSR_TAIL_MAX);
+    }
+
+    #[test]
     fn device_attribute_and_keyboard_queries_are_answered() {
         let mut shared = test_shared();
 
@@ -753,6 +773,23 @@ mod tests {
         assert!(error.contains("osc52 failed"));
         assert!(error.contains("arboard failed"));
     }
+
+    #[test]
+    fn strip_bracketed_paste_markers_removes_embedded_terminators() {
+        // Payload that tries to close paste mode early and inject a command.
+        let hostile = b"safe\x1b[201~rm -rf /\x1b[200~more";
+        let cleaned = strip_bracketed_paste_markers(hostile);
+        assert_eq!(cleaned, b"saferm -rf /more");
+        // No paste markers survive in the cleaned payload.
+        assert!(!cleaned.windows(6).any(|w| w == b"\x1b[201~"));
+        assert!(!cleaned.windows(6).any(|w| w == b"\x1b[200~"));
+    }
+
+    #[test]
+    fn strip_bracketed_paste_markers_leaves_plain_text_untouched() {
+        let plain = "héllo 👋 world".as_bytes();
+        assert_eq!(strip_bracketed_paste_markers(plain), plain);
+    }
 }
 
 fn default_prefix_bindings() -> Vec<TerminalPrefixBinding> {
@@ -826,6 +863,13 @@ type SystemClipboard = Arc<dyn TerminalSystemClipboard>;
 type TerminalParser = vt100::Parser<TerminalCallbacks>;
 const TMUX_DCS_PREFIX: &[u8] = b"tmux;";
 const TMUX_DCS_MAX_BUFFERED: usize = 1024 * 1024;
+/// Upper bound on the partial-CSI tail buffered by [`collect_dsr_responses`].
+///
+/// A real query (DSR / Device Attributes / kitty flags) is only a handful of
+/// bytes, so anything longer is not a query we will ever complete. Capping the
+/// buffer prevents a program that emits `ESC [` followed by an unbounded run of
+/// digits (with no final byte) from driving unbounded memory growth.
+const DSR_TAIL_MAX: usize = 64;
 
 /// System clipboard sink used by [`TerminalEmulator`] copy operations.
 ///
@@ -1360,14 +1404,41 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 fn encode_paste_text(screen: &vt100::Screen, text: &str) -> Vec<u8> {
     if screen.bracketed_paste() {
-        let mut buf = Vec::with_capacity(text.len() + 16);
+        // Strip any embedded paste-mode markers from the payload before
+        // wrapping. Without this, clipboard content containing `\x1b[201~`
+        // would prematurely close paste mode and the remaining bytes would be
+        // interpreted by the shell as typed input — a command-injection vector.
+        // xterm handles this the same way (the terminator is removed, not
+        // escaped).
+        let sanitized = strip_bracketed_paste_markers(text.as_bytes());
+        let mut buf = Vec::with_capacity(sanitized.len() + 16);
         buf.extend_from_slice(b"\x1b[200~");
-        buf.extend_from_slice(text.as_bytes());
+        buf.extend_from_slice(&sanitized);
         buf.extend_from_slice(b"\x1b[201~");
         buf
     } else {
         text.as_bytes().to_vec()
     }
+}
+
+/// Removes any `\x1b[200~` / `\x1b[201~` bracketed-paste control sequences from
+/// `bytes`, returning the cleaned payload.
+fn strip_bracketed_paste_markers(bytes: &[u8]) -> Vec<u8> {
+    const START: &[u8] = b"\x1b[200~";
+    const END: &[u8] = b"\x1b[201~";
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(START) {
+            i += START.len();
+        } else if bytes[i..].starts_with(END) {
+            i += END.len();
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 fn copy_text_with_arboard(text: &str) -> Result<()> {
@@ -2693,7 +2764,19 @@ impl TerminalProcess {
         let already_exited = self.record_exit_if_ready(shared);
         self.reader_alive.store(false, Ordering::Relaxed);
         if !already_exited {
-            let _ = self.child.lock().kill();
+            // Signal the child, then reap it. `kill()` alone leaves a zombie
+            // because we just disabled the reader/exit-watcher threads (the only
+            // code paths that call `try_wait`), and `Box<dyn Child>`'s Drop does
+            // not `wait()`. Block until the process is reaped and record the
+            // resulting status so `on_exit` still fires.
+            let status = {
+                let mut child = self.child.lock();
+                let _ = child.kill();
+                child.wait().ok()
+            };
+            if let Some(status) = status {
+                record_exit_status(shared, status);
+            }
         }
         if let Some(handle) = self.reader_thread.take() {
             let _ = handle.join();
@@ -2919,7 +3002,12 @@ fn collect_dsr_responses(shared: &mut TerminalShared, bytes: &[u8]) -> Vec<Vec<u
     }
 
     shared.dsr_tail.clear();
-    shared.dsr_tail.extend_from_slice(&combined[tail_start..]);
+    let tail = &combined[tail_start..];
+    // A pending query is tiny; an over-long tail is an unterminated/garbage CSI
+    // that we will never complete, so drop it instead of buffering unboundedly.
+    if tail.len() <= DSR_TAIL_MAX {
+        shared.dsr_tail.extend_from_slice(tail);
+    }
 
     if responses.is_empty() {
         return Vec::new();
@@ -3341,19 +3429,15 @@ impl TerminalEmulator {
 
     fn handle_scrollback_wheel(&mut self, event: MouseEvent) -> bool {
         let mut shared = self.shared.lock();
-        let step = shared.alternate_screen_scroll.step;
-        let delta = match event.kind {
-            MouseEventKind::ScrollUp => -(step as i16),
-            MouseEventKind::ScrollDown => step as i16,
-            _ => return false,
-        };
+        // Work in `usize` directly: `step` is a `u16` whose full range would
+        // overflow `i16` (and negating `i16::MIN` panics in debug builds).
+        let step = usize::from(shared.alternate_screen_scroll.step);
         let max = shared.max_scrollback();
         let current = shared.parser.screen().scrollback();
-        let desired = if delta.is_negative() {
-            let amount = i32::from(delta).unsigned_abs() as usize;
-            current.saturating_add(amount).min(max)
-        } else {
-            current.saturating_sub(delta as usize)
+        let desired = match event.kind {
+            MouseEventKind::ScrollUp => current.saturating_add(step).min(max),
+            MouseEventKind::ScrollDown => current.saturating_sub(step),
+            _ => return false,
         };
         if desired != current {
             shared.parser.screen_mut().set_scrollback(desired);
@@ -4631,7 +4715,8 @@ fn modifier_value(mods: KeyModifiers) -> u8 {
 fn ctrl_char(c: char) -> Option<u8> {
     let c = c.to_ascii_uppercase();
     match c {
-        '@' => Some(0),
+        // Ctrl+@ and Ctrl+Space both send NUL (0x00), matching xterm.
+        '@' | ' ' => Some(0),
         'A'..='Z' => Some((c as u8) - b'A' + 1),
         '[' => Some(27),
         '\\' => Some(28),
@@ -4719,12 +4804,14 @@ fn encode_mouse_event(
             let seq = format!("\x1b[<{cb};{x};{y}{suffix}");
             Some(seq.into_bytes())
         }
-        vt100::MouseProtocolEncoding::Utf8 | vt100::MouseProtocolEncoding::Default => {
+        vt100::MouseProtocolEncoding::Default => {
             let cb = if matches!(event.kind, MouseEventKind::Up(_)) {
                 3 + modifier_bits
             } else {
                 cb
             };
+            // Legacy X10 encoding: each field is a single byte `value + 32`,
+            // clamped to 255 (coordinates past column/row 223 are unrepresentable).
             let cb = (cb + 32).min(255);
             let x = (x + 32).min(255);
             let y = (y + 32).min(255);
@@ -4735,5 +4822,33 @@ fn encode_mouse_event(
             seq.push(y as u8);
             Some(seq)
         }
+        vt100::MouseProtocolEncoding::Utf8 => {
+            let cb = if matches!(event.kind, MouseEventKind::Up(_)) {
+                3 + modifier_bits
+            } else {
+                cb
+            };
+            // UTF-8 encoding (DECSET 1005): each field is `value + 32` encoded as
+            // a UTF-8 code point, so values > 127 span multiple bytes instead of
+            // being clamped into one. This keeps coordinates correct on terminals
+            // wider/taller than ~95 cells.
+            let mut seq = Vec::with_capacity(9);
+            seq.extend_from_slice(b"\x1b[M");
+            push_mouse_utf8_field(&mut seq, cb + 32);
+            push_mouse_utf8_field(&mut seq, x + 32);
+            push_mouse_utf8_field(&mut seq, y + 32);
+            Some(seq)
+        }
     }
+}
+
+/// Appends a single UTF-8 mouse-report field (DECSET 1005) to `seq`.
+///
+/// Values are clamped to the range xterm can represent in this mode
+/// (`char::MAX` fits in `u16`), then encoded as a UTF-8 code point: one byte for
+/// values ≤ 127, two bytes above that.
+fn push_mouse_utf8_field(seq: &mut Vec<u8>, value: u16) {
+    let code_point = char::from_u32(value as u32).unwrap_or('\u{fffd}');
+    let mut buf = [0u8; 4];
+    seq.extend_from_slice(code_point.encode_utf8(&mut buf).as_bytes());
 }

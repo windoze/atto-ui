@@ -899,6 +899,36 @@ fn update_status_lines(
     config_line.set(config_status_text(terminal_config, term_session));
 }
 
+/// RAII guard that puts the terminal into raw / alternate-screen / mouse-capture
+/// mode and restores it on drop — including on `?`-propagated errors and panics,
+/// which would otherwise leave the user's shell corrupted.
+struct TerminalGuard;
+
+impl TerminalGuard {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+        execute!(
+            io::stdout(),
+            EnterAlternateScreen,
+            event::EnableMouseCapture,
+            cursor::Show
+        )?;
+        Ok(Self)
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = execute!(
+            io::stdout(),
+            LeaveAlternateScreen,
+            event::DisableMouseCapture,
+            cursor::Show
+        );
+        let _ = disable_raw_mode();
+    }
+}
+
 fn main() -> Result<()> {
     let session_config = terminal_session_config_from_env_args();
     let terminal_config_path = session_config.terminal_config_path.clone();
@@ -907,16 +937,11 @@ fn main() -> Result<()> {
     )?);
     let mut terminal_config_observer = terminal_config.dirty_observer();
 
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        event::EnableMouseCapture,
-        cursor::Show
-    )?;
+    // The guard restores the terminal on every exit path (early `?`, panic,
+    // normal return), so the loop below can use `?` freely.
+    let _guard = TerminalGuard::enter()?;
 
-    let backend = CrosstermBackend::new(stdout);
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
@@ -1125,12 +1150,6 @@ fn main() -> Result<()> {
         }
     }
 
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        event::DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    // Terminal restoration is handled by `_guard`'s Drop.
     Ok(())
 }

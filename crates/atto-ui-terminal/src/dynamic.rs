@@ -1,6 +1,6 @@
 use atto_ui::composable::Component;
 use atto_ui::runtime::{
-    component_schema, event_handle, invalid_prop_reason, prop_bool, prop_string, prop_u16,
+    component_schema, event_handle, invalid_prop_reason, prop_bool, prop_string, prop_u64,
     prop_usize, prop_vec_string, register_registry_extension, wrap_with_id,
 };
 use atto_ui::{
@@ -12,15 +12,19 @@ use crate::{TerminalEmulator, TerminalShellIntegration};
 
 impl ComponentPropertySchema for TerminalEmulator {
     fn property_schema() -> Vec<PropertyMeta> {
+        // All of these are consumed only at construction; `TerminalEmulator`
+        // does not implement `get_property`, so declaring them readable would
+        // make introspection/scripting clients believe they can query values
+        // that always come back `not_found`. Mark them write-only to match.
         vec![
             PropertyMeta::new("command", ValueType::String).write_only(),
             PropertyMeta::new("args", ValueType::StringList).write_only(),
-            PropertyMeta::new("scrollback_len", ValueType::U64),
-            PropertyMeta::new("capture", ValueType::Bool),
-            PropertyMeta::new("capture_on_click", ValueType::Bool),
-            PropertyMeta::new("prefix_key", ValueType::String),
-            PropertyMeta::new("shell_integration", ValueType::Bool),
-            PropertyMeta::new("scroll_step", ValueType::U64),
+            PropertyMeta::new("scrollback_len", ValueType::U64).write_only(),
+            PropertyMeta::new("capture", ValueType::Bool).write_only(),
+            PropertyMeta::new("capture_on_click", ValueType::Bool).write_only(),
+            PropertyMeta::new("prefix_key", ValueType::String).write_only(),
+            PropertyMeta::new("shell_integration", ValueType::Bool).write_only(),
+            PropertyMeta::new("scroll_step", ValueType::U64).write_only(),
         ]
     }
 }
@@ -55,27 +59,30 @@ pub fn register_terminal_emulator(
 
         if let Some(key) = prop_string(spec, "prefix_key")? {
             let mut chars = key.chars();
-            let Some(letter) = chars.next() else {
+            let letter = chars.next().filter(|_| chars.next().is_none());
+            let Some(letter) = letter.filter(char::is_ascii_alphabetic) else {
                 return Err(invalid_prop_reason(
                     spec,
                     "prefix_key",
                     "terminal prefix key must be a single ASCII letter",
                 ));
             };
-            if chars.next().is_some() {
-                return Err(invalid_prop_reason(
-                    spec,
-                    "prefix_key",
-                    "terminal prefix key must be a single ASCII letter",
-                ));
-            }
             view = view
                 .prefix_key(letter)
                 .map_err(|err| invalid_prop_reason(spec, "prefix_key", err.to_string()))?;
         }
 
-        if let Some(step) = prop_u16(spec, "scroll_step")? {
-            view = view.scroll_step(step);
+        if let Some(step) = prop_u64(spec, "scroll_step")? {
+            // scroll_step is a u16; reject oversized values instead of silently
+            // clamping (which `prop_u16` would do).
+            if step > u16::MAX as u64 {
+                return Err(invalid_prop_reason(
+                    spec,
+                    "scroll_step",
+                    format!("terminal scroll_step must be <= {}", u16::MAX),
+                ));
+            }
+            view = view.scroll_step(step as u16);
         }
 
         if let Some(enabled) = prop_bool(spec, "shell_integration")? {

@@ -135,14 +135,10 @@ impl TerminalSettingsDraft {
             &self.alternate_screen_scroll_step,
             "alternate screen scroll step",
         )?;
-        let ansi_vec = self
-            .palette_ansi
-            .iter()
-            .map(|value| TerminalColorSpec::new(value.trim()))
-            .collect::<Vec<_>>();
-        let ansi: [TerminalColorSpec; PALETTE_LEN] = ansi_vec
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("terminal palette must contain 16 ANSI colors"))?;
+        // `palette_ansi` is a fixed `[String; PALETTE_LEN]`, so build the output
+        // array directly — no fallible length check needed.
+        let ansi: [TerminalColorSpec; PALETTE_LEN] =
+            std::array::from_fn(|idx| TerminalColorSpec::new(self.palette_ansi[idx].trim()));
 
         let profile_name = self.profile_name.trim();
         let profile_command = self.profile_command.trim();
@@ -216,6 +212,10 @@ struct TerminalSettingsBindings {
     palette_items: Binding<Vec<String>>,
     selected_palette_index: Binding<usize>,
     selected_palette_value: Binding<String>,
+    /// Palette index whose value currently lives in `selected_palette_value`.
+    /// Used to detect selection changes so the outgoing edit is committed and
+    /// the incoming value is loaded into the editor.
+    committed_palette_index: Binding<usize>,
     profile_name: Binding<String>,
     profile_command: Binding<String>,
     profile_args_json: Binding<String>,
@@ -250,6 +250,7 @@ impl TerminalSettingsBindings {
             palette_items,
             selected_palette_index: Binding::new(0),
             selected_palette_value,
+            committed_palette_index: Binding::new(0),
             profile_name: Binding::new(draft.profile_name),
             profile_command: Binding::new(draft.profile_command),
             profile_args_json: Binding::new(draft.profile_args_json),
@@ -262,13 +263,43 @@ impl TerminalSettingsBindings {
         }
     }
 
-    fn to_draft(&self) -> TerminalSettingsDraft {
-        let mut palette_ansi = std::array::from_fn(|idx| self.palette_ansi[idx].get());
+    /// Reconciles the single "Color" editor with the per-index palette store.
+    ///
+    /// The palette UI edits one entry at a time through `selected_palette_value`
+    /// while the ListBox drives `selected_palette_index`. This commits the
+    /// currently-edited value back into `palette_ansi[committed]` every frame,
+    /// and when the selection changes it loads the newly-selected index's value
+    /// into the editor. Without this, only the last-selected entry would ever be
+    /// saved and edits to every other index would be silently lost.
+    ///
+    /// Returns `true` when the selection changed (so callers can refresh derived
+    /// state).
+    fn reconcile_palette_selection(&self) -> bool {
+        let committed = self
+            .committed_palette_index
+            .get()
+            .min(PALETTE_LEN.saturating_sub(1));
+        // Always flush the in-progress edit into the entry it belongs to.
+        self.palette_ansi[committed].set(self.selected_palette_value.get());
+
         let selected = self
             .selected_palette_index
             .get()
             .min(PALETTE_LEN.saturating_sub(1));
-        palette_ansi[selected] = self.selected_palette_value.get();
+        if selected == committed {
+            return false;
+        }
+        // Selection moved: load the newly-selected entry into the editor.
+        self.selected_palette_value
+            .set(self.palette_ansi[selected].get());
+        self.committed_palette_index.set(selected);
+        true
+    }
+
+    fn to_draft(&self) -> TerminalSettingsDraft {
+        // Ensure the in-progress edit is reflected before snapshotting.
+        self.reconcile_palette_selection();
+        let palette_ansi = std::array::from_fn(|idx| self.palette_ansi[idx].get());
 
         TerminalSettingsDraft {
             scrollback_len: self.scrollback_len.get(),
@@ -315,6 +346,7 @@ impl TerminalSettingsBindings {
         self.selected_palette_index.set(0);
         self.selected_palette_value
             .set(draft.palette_ansi[0].clone());
+        self.committed_palette_index.set(0);
         self.profile_name.set(draft.profile_name);
         self.profile_command.set(draft.profile_command);
         self.profile_args_json.set(draft.profile_args_json);
@@ -399,7 +431,17 @@ impl TerminalSettingsHandle {
     }
 
     pub fn save(&self) -> Result<TerminalConfig> {
-        let config = self.apply()?;
+        // Validate and persist to disk *before* mutating the live config, so a
+        // failed write (permissions, read-only FS, full disk) never leaves the
+        // running terminal config diverged from what is on disk.
+        let config = match self.draft().to_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.status
+                    .set(format!("Error: {}", first_error_line(&error)));
+                return Err(error);
+            }
+        };
         let path = self
             .save_path
             .as_ref()
@@ -407,11 +449,23 @@ impl TerminalSettingsHandle {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
-            fs::create_dir_all(parent).with_context(|| {
+            if let Err(error) = fs::create_dir_all(parent).with_context(|| {
                 format!("create terminal config directory {}", parent.display())
-            })?;
+            }) {
+                self.status
+                    .set(format!("Error: {}", first_error_line(&error)));
+                return Err(error);
+            }
         }
-        config.save_path_infer(path)?;
+        if let Err(error) = config.save_path_infer(path) {
+            self.status
+                .set(format!("Error: {}", first_error_line(&error)));
+            return Err(error);
+        }
+
+        // Only now that the file is safely written do we adopt it as the live
+        // config.
+        self.applied_config.set(config.clone());
         self.status
             .set(format!("Saved terminal config to {}", path.display()));
         Ok(config)
@@ -476,11 +530,16 @@ impl TerminalSettingsView {
     }
 
     fn refresh_palette_items(&self) {
-        let draft = self.handle.draft();
+        // Commit the in-progress palette edit and load the newly-selected entry
+        // before recomputing the list labels, so the ListBox shows live values
+        // and no edit is dropped when the selection moves.
+        self.handle.bindings.reconcile_palette_selection();
+        let palette_ansi: [String; PALETTE_LEN] =
+            std::array::from_fn(|idx| self.handle.bindings.palette_ansi[idx].get());
         self.handle
             .bindings
             .palette_items
-            .set(palette_items_for(&draft.palette_ansi));
+            .set(palette_items_for(&palette_ansi));
     }
 }
 
@@ -1150,6 +1209,35 @@ mod tests {
     }
 
     #[test]
+    fn terminal_settings_palette_editor_commits_all_edited_indices() {
+        // Mirrors the real UI path: the ListBox drives `selected_palette_index`
+        // and the single "Color" TextBox drives `selected_palette_value`. A
+        // reconcile runs each frame (via `refresh_palette_items`). This must
+        // preserve edits to *every* index the user visits, not just the last.
+        let config = Binding::new(TerminalConfig::default());
+        let view = TerminalSettingsView::new(config.clone(), None);
+        let handle = view.handle();
+        let bindings = &handle.bindings;
+
+        // Edit index 0 in the Color box.
+        bindings.selected_palette_value.set("#111111".to_string());
+        // Move the ListBox selection to index 3 (a frame renders in between).
+        bindings.selected_palette_index.set(3);
+        view.refresh_palette_items();
+        // The editor now shows index 3's value; edit it.
+        bindings.selected_palette_value.set("#333333".to_string());
+        // Move to index 7 and edit.
+        bindings.selected_palette_index.set(7);
+        view.refresh_palette_items();
+        bindings.selected_palette_value.set("#777777".to_string());
+
+        let applied = handle.apply().unwrap();
+        assert_eq!(applied.palette.ansi[0].as_str(), "#111111");
+        assert_eq!(applied.palette.ansi[3].as_str(), "#333333");
+        assert_eq!(applied.palette.ansi[7].as_str(), "#777777");
+    }
+
+    #[test]
     fn terminal_settings_rejects_invalid_edits_without_mutating_config() {
         let config = Binding::new(TerminalConfig::default());
         let original = config.get();
@@ -1224,5 +1312,35 @@ mod tests {
         assert!(handle.status_text().contains("Saved terminal config"));
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn terminal_settings_save_failure_does_not_mutate_live_config() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        // Make the save path's parent a regular file so create_dir_all / write
+        // fails even though the draft itself is valid.
+        let blocker = env::temp_dir().join(format!(
+            "atto-ui-terminal-settings-blocker-{}-{unique}",
+            process::id()
+        ));
+        fs::write(&blocker, b"not a directory").expect("create blocker file");
+        let path = blocker.join("terminal.yaml");
+
+        let config = Binding::new(TerminalConfig::default());
+        let original = config.get();
+        let view = TerminalSettingsView::new(config.clone(), Some(path));
+        let handle = view.handle();
+
+        // Valid edit, but the write must fail.
+        handle.set_scrollback_len_text("4321");
+        assert!(handle.save().is_err());
+        // The live config must be untouched when the write fails.
+        assert_eq!(config.get(), original);
+        assert!(handle.status_text().contains("Error"));
+
+        let _ = fs::remove_file(blocker);
     }
 }

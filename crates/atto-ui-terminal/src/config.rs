@@ -17,6 +17,10 @@ use crate::session::TerminalSessionSpec;
 use crate::terminal::{TerminalCursorShape, TerminalShellIntegration, TerminalShortcut};
 
 pub const DEFAULT_TERMINAL_SCROLLBACK_LEN: usize = 2000;
+/// Upper bound on `scrollback_len`. Guards against a mistyped/huge value driving
+/// unbounded scrollback-buffer allocation. One million lines is far beyond any
+/// realistic use while still bounding memory.
+pub const MAX_TERMINAL_SCROLLBACK_LEN: usize = 1_000_000;
 pub const DEFAULT_TERMINAL_SCROLL_STEP: u16 = 3;
 pub const DEFAULT_TERMINAL_PROFILE_NAME: &str = "Shell";
 pub const DEFAULT_TERMINAL_SHELL_FALLBACK: &str = "/bin/sh";
@@ -102,11 +106,35 @@ impl TerminalConfig {
     }
 
     /// Saves a terminal config to a path using the requested format.
+    ///
+    /// The write is atomic: the content goes to a sibling temporary file that is
+    /// then renamed over `path`. A crash, full disk, or concurrent reader during
+    /// the write can never leave a truncated/corrupt config in place (which would
+    /// silently fall back to defaults on the next load), and on failure the
+    /// existing file is left untouched.
     pub fn save_path(&self, path: impl AsRef<Path>, format: TerminalConfigFormat) -> Result<()> {
         let path = path.as_ref();
         let content = self.to_string(format)?;
-        fs::write(path, content)
-            .with_context(|| format!("write terminal config {}", path.display()))
+
+        let mut tmp_name = path
+            .file_name()
+            .map(|name| name.to_os_string())
+            .unwrap_or_else(|| std::ffi::OsString::from("terminal-config"));
+        tmp_name.push(format!(".tmp.{}", std::process::id()));
+        let tmp_path = path.with_file_name(tmp_name);
+
+        fs::write(&tmp_path, content)
+            .with_context(|| format!("write terminal config {}", tmp_path.display()))?;
+        match fs::rename(&tmp_path, path) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                // Best-effort cleanup so a failed rename doesn't leave the temp
+                // file behind.
+                let _ = fs::remove_file(&tmp_path);
+                Err(error)
+                    .with_context(|| format!("replace terminal config {}", path.display()))
+            }
+        }
     }
 
     /// Saves a terminal config to a path whose extension selects JSON or YAML.
@@ -153,6 +181,10 @@ impl TerminalConfig {
         ensure!(
             self.scrollback_len > 0,
             "terminal scrollback_len must be greater than zero"
+        );
+        ensure!(
+            self.scrollback_len <= MAX_TERMINAL_SCROLLBACK_LEN,
+            "terminal scrollback_len must not exceed {MAX_TERMINAL_SCROLLBACK_LEN}"
         );
         self.prefix_shortcut()
             .context("invalid terminal prefix_key")?;
@@ -1088,6 +1120,25 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("scrollback_len")
+        );
+
+        let oversized_scrollback = format!(
+            r#"{{"scrollback_len":{}}}"#,
+            MAX_TERMINAL_SCROLLBACK_LEN + 1
+        );
+        assert!(
+            TerminalConfig::from_str(&oversized_scrollback, TerminalConfigFormat::Json)
+                .unwrap_err()
+                .to_string()
+                .contains("scrollback_len")
+        );
+        // The cap itself is accepted.
+        assert!(
+            TerminalConfig::from_str(
+                &format!(r#"{{"scrollback_len":{MAX_TERMINAL_SCROLLBACK_LEN}}}"#),
+                TerminalConfigFormat::Json
+            )
+            .is_ok()
         );
 
         let invalid_palette = r#"{"palette":{"ansi":["nope","red","green","yellow","blue","magenta","cyan","gray","dark_gray","light_red","light_green","light_yellow","light_blue","light_magenta","light_cyan","white"]}}"#;

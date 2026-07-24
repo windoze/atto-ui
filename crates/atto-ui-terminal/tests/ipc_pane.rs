@@ -267,21 +267,30 @@ fn tmux_shim_from_child_path_drives_native_pane_methods() {
         ),
         start = sh_quote(&start_path)
     );
-    let mut terminal = TerminalEmulator::new().tmux_environment(TerminalTmuxEnvironmentConfig {
+    // Pane ids are allocated when the group is created, so build the group
+    // first and inject the *actual* pane id as `$TMUX_PANE`; otherwise the
+    // shim's `capture-pane`/`send-keys` would target a non-existent pane.
+    let mut group = TerminalPaneGroup::new(TerminalEmulator::new());
+    let panes = group.handle();
+    let pane_id = panes.active_pane_id().expect("active pane").raw();
+    let handle = panes
+        .active_terminal_handle()
+        .expect("active terminal handle");
+    handle.set_tmux_environment(TerminalTmuxEnvironmentConfig {
         inject: true,
         socket_path: socket_path.to_string_lossy().into_owned(),
         shim_path: Some(tmux_shim_dir()),
         server_pid: Some(std::process::id()),
         session_id: 1,
-        pane_id: 1,
+        pane_id,
         override_term: false,
     });
-    let handle = terminal.handle();
-    terminal
-        .spawn_process("/bin/sh", &["-c".to_string(), script])
+    group
+        .with_active_terminal_mut(|terminal| {
+            terminal.spawn_process("/bin/sh", &["-c".to_string(), script])
+        })
+        .expect("active pane present")
         .expect("spawn tmux shim probe shell");
-    let group = TerminalPaneGroup::new(terminal);
-    let panes = group.handle();
     let mut desktop = desktop_with_group(group);
     draw_desktop(&mut desktop);
 

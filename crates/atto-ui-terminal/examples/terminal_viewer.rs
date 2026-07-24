@@ -543,7 +543,13 @@ fn command_block_at_mouse(
     mouse: &MouseEvent,
 ) -> Option<(WindowId, TerminalPaneId, usize)> {
     for session in sessions {
-        let inner = desktop.wm.window(session.id)?.inner_rect();
+        // A session may briefly outlive its window (pruned only on the next
+        // tick). Skip such sessions instead of aborting the whole scan, which
+        // would miss command blocks in later, still-valid sessions.
+        let Some(window) = desktop.wm.window(session.id) else {
+            continue;
+        };
+        let inner = window.inner_rect();
         if mouse.column < inner.x
             || mouse.row < inner.y
             || mouse.column >= inner.x.saturating_add(inner.width)

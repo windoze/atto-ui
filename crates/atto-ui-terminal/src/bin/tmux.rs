@@ -392,18 +392,28 @@ fn append_key_bytes(key: &str, literal: bool, output: &mut Vec<u8>) -> Result<()
     }
 
     match key {
-        "Enter" | "ENTER" | "C-m" | "C-M" => output.push(b'\n'),
+        // tmux `Enter` and `C-m` send carriage return (0x0D), not line feed;
+        // shells and line-editing REPLs in raw mode submit on CR. `C-j` is the
+        // one that sends LF.
+        "Enter" | "ENTER" | "C-m" | "C-M" => output.push(b'\r'),
+        "C-j" | "C-J" => output.push(b'\n'),
         "Space" | "SPACE" => output.push(b' '),
+        // Ctrl+Space / Ctrl+@ send NUL (0x00).
+        "C-Space" | "C-SPACE" | "C-@" => output.push(0x00),
         "Tab" | "TAB" | "C-i" | "C-I" => output.push(b'\t'),
         "Escape" | "Esc" | "ESC" | "C-[" => output.push(0x1b),
         "BSpace" | "Backspace" | "BACKSPACE" => output.push(0x7f),
         value if value.len() == 3 && value.starts_with("C-") => {
-            let byte = value.as_bytes()[2];
+            // Control combinations are only defined for ASCII letters and the
+            // `@ [ \ ] ^ _` symbols (which map to control codes 0x00, 0x1B..0x1F).
+            // Anything else (e.g. `C-1`) has no control byte and would otherwise
+            // produce a nonsense value from `& 0x1f`.
+            let byte = value.as_bytes()[2].to_ascii_uppercase();
             ensure!(
-                byte.is_ascii(),
-                "unsupported control key {value:?}; expected ASCII"
+                byte.is_ascii_uppercase() || matches!(byte, b'@' | b'[' | b'\\' | b']' | b'^' | b'_'),
+                "unsupported control key {value:?}; expected C-<letter> or C-@[\\]^_"
             );
-            output.push(byte.to_ascii_uppercase() & 0x1f);
+            output.push(byte & 0x1f);
         }
         value => output.extend_from_slice(value.as_bytes()),
     }
