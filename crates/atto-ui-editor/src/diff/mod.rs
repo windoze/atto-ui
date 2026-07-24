@@ -220,7 +220,7 @@ impl DiffView {
         let gw = gutter_width(layout, show_ln);
         let text_w = area.width.saturating_sub(gw) as usize;
 
-        sess.report_column_width(0, text_w);
+        sess.report_column_width(0, text_w, area.height as usize);
 
         self.uni_viewport_rows = area.height as usize;
         self.uni_viewport_cols = area.width;

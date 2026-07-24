@@ -120,7 +120,28 @@ impl LspWorkspaceBridge {
         if let Some(sync) = self.lsp_by_root_language.get_mut(&key) {
             sync.close_workspace_document(workspace, buffer_id)?;
         }
+
+        self.retire_key_if_unused(&key);
         Ok(())
+    }
+
+    /// If no open document still maps to `key`, drop and shut down the shared `(root, language)`
+    /// server instead of letting it idle until app exit (where `LspClient::Drop` would finally
+    /// reap it). Returns whether the key was retired. Must be called AFTER `document_keys` no
+    /// longer contains the just-closed buffer.
+    fn retire_key_if_unused(&mut self, key: &LspKey) -> bool {
+        if self.document_keys.values().any(|k| k == key) {
+            return false;
+        }
+        // Drop any in-flight workspace-symbol requests bound to this key so their ids can't dangle.
+        self.pending_workspace_symbols
+            .retain(|(pending_key, _), _| pending_key != key);
+        if let Some(mut sync) = self.lsp_by_root_language.remove(key) {
+            // Best-effort graceful shutdown; `exit()` kills and reaps the child even without a
+            // prior shutdown handshake.
+            let _ = sync.session_mut().exit();
+        }
+        true
     }
 
     pub fn set_active_document(
@@ -454,5 +475,84 @@ mod tests {
             .insert(second.buffer_id, second_key.clone());
 
         assert_eq!(bridge.active_poll_key(&workspace), Some(second_key));
+    }
+
+    #[test]
+    fn retire_key_keeps_session_while_another_document_uses_it() {
+        // Two buffers share one (root, language). Closing one must NOT retire the key.
+        let key = LspKey {
+            workspace_root: PathBuf::from("/tmp/ws"),
+            language_id: "rust".to_string(),
+        };
+        let mut workspace = Workspace::new();
+        let a = workspace.open_buffer(None, "a\n", 80).expect("open a");
+        let b = workspace.open_buffer(None, "b\n", 80).expect("open b");
+
+        let mut bridge = LspWorkspaceBridge::default();
+        bridge.document_keys.insert(a.buffer_id, key.clone());
+        bridge.document_keys.insert(b.buffer_id, key.clone());
+
+        // Simulate closing `a`: remove its document_keys entry (as close_document does) first.
+        bridge.document_keys.remove(&a.buffer_id);
+        assert!(
+            !bridge.retire_key_if_unused(&key),
+            "key still used by b must not be retired"
+        );
+
+        // Closing `b` too: now the key is unused and must be retired.
+        bridge.document_keys.remove(&b.buffer_id);
+        assert!(
+            bridge.retire_key_if_unused(&key),
+            "last document closed → key retired"
+        );
+    }
+
+    #[test]
+    fn retire_key_drops_session_and_pending_when_last_document_closes() {
+        let key = LspKey {
+            workspace_root: PathBuf::from("/tmp/ws"),
+            language_id: "rust".to_string(),
+        };
+        let mut bridge = LspWorkspaceBridge::default();
+        // A pending workspace-symbol request bound to this key must be cleared on retirement.
+        bridge
+            .pending_workspace_symbols
+            .insert((key.clone(), 7), "query".to_string());
+        // No document_keys entries reference the key → it is unused.
+        assert!(bridge.retire_key_if_unused(&key));
+        assert!(
+            bridge.pending_workspace_symbols.is_empty(),
+            "pending workspace-symbol requests for the retired key must be cleared"
+        );
+        assert!(!bridge.lsp_by_root_language.contains_key(&key));
+    }
+
+    #[test]
+    fn retire_key_is_noop_when_other_pending_and_docs_remain() {
+        let key = LspKey {
+            workspace_root: PathBuf::from("/tmp/ws"),
+            language_id: "rust".to_string(),
+        };
+        let other_key = LspKey {
+            workspace_root: PathBuf::from("/tmp/ws"),
+            language_id: "python".to_string(),
+        };
+        let mut workspace = Workspace::new();
+        let a = workspace.open_buffer(None, "a\n", 80).expect("open a");
+
+        let mut bridge = LspWorkspaceBridge::default();
+        bridge.document_keys.insert(a.buffer_id, key.clone());
+        // Pending request for an unrelated key must survive when `key` stays in use.
+        bridge
+            .pending_workspace_symbols
+            .insert((other_key.clone(), 1), "q".to_string());
+
+        assert!(!bridge.retire_key_if_unused(&key));
+        assert!(
+            bridge
+                .pending_workspace_symbols
+                .contains_key(&(other_key, 1)),
+            "unrelated pending request must not be cleared"
+        );
     }
 }

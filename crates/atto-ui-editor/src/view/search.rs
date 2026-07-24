@@ -334,33 +334,16 @@ impl EditorView {
         let query = self.search_query_string();
         let replacement = self.search.replacement.text().to_string();
 
-        let old_char_count = self.state_manager.editor().char_count();
-        let mut full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
-            lsp.full_document_change(self.state_manager.editor().line_index(), old_char_count, "")
-        });
-
-        let before = self.state_manager.editor().get_text();
-        let res = self
-            .state_manager
-            .execute(Command::Edit(EditCommand::ReplaceCurrent {
-                query,
-                replacement,
-                options: self.search.options,
-            }));
-        if res.is_err() {
-            return;
-        }
-
-        let after = self.state_manager.editor().get_text();
-        if after != before {
-            self.config.text.set(after.clone());
+        // `ReplaceCurrent` is a single command → one structured delta; the helper forwards exactly
+        // the replaced span to the LSP server.
+        let changed = self.execute_edit_and_sync_delta(Command::Edit(EditCommand::ReplaceCurrent {
+            query,
+            replacement,
+            options: self.search.options,
+        }));
+        if changed {
             self.maybe_apply_syntax_highlighting();
             self.apply_search_highlighting();
-
-            if let Some(mut change) = full_lsp_change.take() {
-                change.text = after;
-                self.lsp_did_change(change);
-            }
         }
     }
 
@@ -368,33 +351,16 @@ impl EditorView {
         let query = self.search_query_string();
         let replacement = self.search.replacement.text().to_string();
 
-        let old_char_count = self.state_manager.editor().char_count();
-        let mut full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
-            lsp.full_document_change(self.state_manager.editor().line_index(), old_char_count, "")
-        });
-
-        let before = self.state_manager.editor().get_text();
-        let res = self
-            .state_manager
-            .execute(Command::Edit(EditCommand::ReplaceAll {
-                query,
-                replacement,
-                options: self.search.options,
-            }));
-        if res.is_err() {
-            return;
-        }
-
-        let after = self.state_manager.editor().get_text();
-        if after != before {
-            self.config.text.set(after.clone());
+        // `ReplaceAll` collapses every replacement into a single command/delta (not a loop of
+        // executes), so the delta helper stays in sync with the LSP mirror.
+        let changed = self.execute_edit_and_sync_delta(Command::Edit(EditCommand::ReplaceAll {
+            query,
+            replacement,
+            options: self.search.options,
+        }));
+        if changed {
             self.maybe_apply_syntax_highlighting();
             self.apply_search_highlighting();
-
-            if let Some(mut change) = full_lsp_change.take() {
-                change.text = after;
-                self.lsp_did_change(change);
-            }
         }
     }
 

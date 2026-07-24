@@ -185,7 +185,12 @@ impl DiffSession {
     /// changed. The scroll position is preserved across the re-wrap by anchoring on the first
     /// real logical line currently at the top of the viewport — this exercises the diff-view
     /// row mapping that must stay correct when the splitter position changes.
-    pub(crate) fn report_column_width(&mut self, column: usize, text_width: usize) {
+    pub(crate) fn report_column_width(
+        &mut self,
+        column: usize,
+        text_width: usize,
+        viewport_rows: usize,
+    ) {
         let n = self.column_count();
         if self.col_text_widths.len() != n {
             self.col_text_widths = vec![0; n];
@@ -206,8 +211,10 @@ impl DiffSession {
             {
                 self.scroll_top = row;
             }
-            let max = self.row_count().saturating_sub(1);
-            self.scroll_top = self.scroll_top.min(max);
+            // Re-wrapping (wider columns) can shrink the row count; clamp against
+            // `max_scroll_top` (row_count - viewport_rows), not row_count - 1, so a viewport that
+            // was scrolled near the old bottom doesn't end up showing a page of blank rows.
+            self.set_scroll_top(self.scroll_top, viewport_rows);
         }
     }
 
@@ -319,10 +326,15 @@ impl DiffSession {
             full_row += 1;
         }
 
-        self.visible_projection = DiffProjection {
-            columns: self.projection.columns,
-            rows,
-        };
+        // `DiffProjection` gained a private, precomputed `side_maps` index in
+        // editor-core-diff-view 0.4.2 with no public constructor for custom rows, so we clone the
+        // base projection (inheriting `columns`/`column_widths`) and overwrite only the public
+        // `rows`. The inherited `side_maps` is stale w.r.t. the collapsed rows, but the diff panes
+        // never call the side<->unified row-mapping methods on `visible_projection` — they scan
+        // `rows()` directly (see `render_column`, `top_anchor`, `unified_row_for_logical`).
+        let mut visible = self.projection.clone();
+        visible.rows = rows;
+        self.visible_projection = visible;
     }
 
     fn full_projection_hunk_ranges(&self) -> Vec<(usize, Range<usize>)> {
@@ -432,8 +444,8 @@ mod tests {
             EditorSyntaxConfig::SimpleRust,
         );
 
-        session.report_column_width(0, 80);
-        session.report_column_width(1, 80);
+        session.report_column_width(0, 80, 24);
+        session.report_column_width(1, 80, 24);
 
         let slot = session
             .visible_projection()
@@ -451,5 +463,43 @@ mod tests {
 
         assert!(slot[0].styles.contains(&TS_STYLE_KEYWORD));
         assert!(slot[3].styles.contains(&TS_STYLE_FUNCTION));
+    }
+
+    #[test]
+    fn rewrap_to_fewer_rows_clamps_scroll_within_viewport() {
+        // Many long logical lines each wrap into several rows at a narrow width, then collapse to
+        // one row each when the column is widened. Scrolled to the bottom, the top anchor is a
+        // late logical line; after the re-wrap that line maps near the new end. Regression guard:
+        // `scroll_top` must be clamped to `max_scroll_top` (row_count - viewport_rows), not
+        // row_count - 1 — otherwise the viewport renders a page of blank rows below the last line.
+        let doc = (0..40)
+            .map(|i| format!("line {i} {}", "word ".repeat(20)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut session = DiffSession::new(
+            &doc,
+            &doc,
+            LineDiffConfig::default(),
+            DiffMode::Unified,
+            false,
+            EditorSyntaxConfig::None,
+        );
+
+        let viewport = 10;
+        // Narrow width → each line wraps into several rows.
+        session.report_column_width(0, 12, viewport);
+        session.set_scroll_top(session.row_count(), viewport); // scroll to the very bottom
+        assert!(session.row_count() > viewport);
+
+        // Widen the column → every line fits on one row, so the row count shrinks sharply.
+        session.report_column_width(0, 400, viewport);
+
+        assert!(
+            session.scroll_top() <= session.max_scroll_top(viewport),
+            "scroll_top {} exceeded max_scroll_top {} after re-wrap (row_count {})",
+            session.scroll_top(),
+            session.max_scroll_top(viewport),
+            session.row_count(),
+        );
     }
 }
