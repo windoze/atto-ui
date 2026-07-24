@@ -88,53 +88,22 @@ impl EditorView {
         match action {
             EditorAction::Undo => {
                 self.hide_popups();
-                let old_char_count = self.state_manager.editor().char_count();
-                let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
-                    lsp.full_document_change(
-                        self.state_manager.editor().line_index(),
-                        old_char_count,
-                        "",
-                    )
-                });
-                let before = self.state_manager.editor().get_text();
-                if !self.execute(Command::Edit(EditCommand::Undo)) {
-                    return false;
+                // Undo/Redo each restore a single stored step → one structured delta, so the helper
+                // forwards the exact reverted/reapplied span to the LSP server. The return value
+                // reflects whether the document actually changed (false on an empty undo stack).
+                let changed = self.execute_edit_and_sync_delta(Command::Edit(EditCommand::Undo));
+                if changed {
+                    self.maybe_apply_syntax_highlighting();
                 }
-                let after = self.state_manager.editor().get_text();
-                if after != before {
-                    self.config.text.set(after.clone());
-                }
-                self.maybe_apply_syntax_highlighting();
-                if let Some(mut change) = full_lsp_change {
-                    change.text = after;
-                    self.lsp_did_change(change);
-                }
-                true
+                changed
             }
             EditorAction::Redo => {
                 self.hide_popups();
-                let old_char_count = self.state_manager.editor().char_count();
-                let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
-                    lsp.full_document_change(
-                        self.state_manager.editor().line_index(),
-                        old_char_count,
-                        "",
-                    )
-                });
-                let before = self.state_manager.editor().get_text();
-                if !self.execute(Command::Edit(EditCommand::Redo)) {
-                    return false;
+                let changed = self.execute_edit_and_sync_delta(Command::Edit(EditCommand::Redo));
+                if changed {
+                    self.maybe_apply_syntax_highlighting();
                 }
-                let after = self.state_manager.editor().get_text();
-                if after != before {
-                    self.config.text.set(after.clone());
-                }
-                self.maybe_apply_syntax_highlighting();
-                if let Some(mut change) = full_lsp_change {
-                    change.text = after;
-                    self.lsp_did_change(change);
-                }
-                true
+                changed
             }
             EditorAction::Copy => {
                 self.copy_selection();

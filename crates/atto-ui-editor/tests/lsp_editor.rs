@@ -1813,6 +1813,83 @@ fn mock_lsp_editor(
     (text, view, handle)
 }
 
+/// Regression guard for the auto-pair deletion / LSP `didChange` desync.
+///
+/// With auto-pairs enabled (as `atto-editor-app` does for every non-plaintext language) typing `(`
+/// inserts `()`, and Backspace between the pair deletes *both* characters. The editor forwards each
+/// edit to the LSP server via `LspSession::did_change_from_text_delta`, which carries the exact
+/// `TextDelta` and asserts (in debug builds) that `delta.before_char_count` matches its internal
+/// mirror. If any edit path sent a wrong/partial range — the original bug, which assumed Backspace
+/// only ever removed one character — the mirror would drift and this test would panic on the
+/// upstream `debug_assert`. Driving insert → pair-delete → re-type → undo/redo over a live session
+/// exercises every migrated edit path and proves the mirror stays in lockstep.
+#[test]
+fn lsp_auto_pair_deletion_keeps_didchange_in_sync() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+    let text: atto_ui::reactive::Binding<String> = String::new().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.auto_pairs.set(editor_core::AutoPairsConfig {
+        enabled: true,
+        ..editor_core::AutoPairsConfig::default()
+    });
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///auto_pairs.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, _handle) = EditorView::new(cfg, theme);
+    let mut terminal = test_terminal();
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = test_component_context(&app_theme);
+    let area = Rect::new(0, 0, 80, 10);
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+
+    // Type `(` → auto-pair inserts `()` and leaves the cursor between the pair.
+    view.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Char('('), KeyModifiers::NONE)),
+        ctx,
+    );
+    assert_eq!(text.get(), "()");
+
+    // Backspace between the pair deletes BOTH characters — the multi-char delete the old
+    // single-char-range assumption got wrong. A drifted mirror would panic here in a debug build.
+    view.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)),
+        ctx,
+    );
+    assert_eq!(text.get(), "");
+
+    // A few more edits over the same live session to catch any accumulated drift.
+    for ch in ['a', 'b', 'c'] {
+        view.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)),
+            ctx,
+        );
+    }
+    assert_eq!(text.get(), "abc");
+    view.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)),
+        ctx,
+    );
+    assert_eq!(text.get(), "ab");
+    assert!(view.handle_editor_action(EditorAction::Undo));
+    assert_eq!(text.get(), "abc");
+    assert!(view.handle_editor_action(EditorAction::Redo));
+    assert_eq!(text.get(), "ab");
+}
+
 fn test_terminal() -> ratatui::Terminal<ratatui::backend::TestBackend> {
     let backend = ratatui::backend::TestBackend::new(80, 10);
     ratatui::Terminal::new(backend).expect("terminal")

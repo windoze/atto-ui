@@ -19,7 +19,24 @@ impl EditorView {
             };
             lsp.did_change(change)
         };
+        self.handle_did_change_result(result);
+    }
 
+    /// Forward the structured `TextDelta` an edit produced to the LSP server. Preferred over
+    /// `lsp_did_change`: the delta carries the exact edit, so the server mirror never desyncs on
+    /// multi-char edits (auto-pair deletion, re-indentation, multi-cursor). See
+    /// `execute_edit_and_sync_delta`.
+    pub(super) fn lsp_did_change_from_delta(&mut self, delta: &editor_core::TextDelta) {
+        let result = {
+            let Some(lsp) = self.lsp.session.as_mut() else {
+                return;
+            };
+            lsp.did_change_from_text_delta(delta)
+        };
+        self.handle_did_change_result(result);
+    }
+
+    fn handle_did_change_result(&mut self, result: Result<(), String>) {
         if result.is_err() {
             self.lsp.session = None;
             self.reset_inlay_hint_tracking();
@@ -1278,6 +1295,10 @@ impl EditorView {
             })
             .collect::<Vec<_>>();
 
+        // `ApplyTextEdits` applies each edit via a separate internal `execute`, so only the last
+        // sub-edit's `TextDelta` survives in `last_text_delta` — the delta helper can't represent
+        // the whole batch. A full-document replacement is exact here and keeps the LSP mirror in
+        // sync (`did_change_many` advances it by the same replacement).
         let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
             let old_char_count = self.state_manager.editor().char_count();
             lsp.full_document_change(self.state_manager.editor().line_index(), old_char_count, "")
@@ -1550,6 +1571,9 @@ impl EditorView {
         }
 
         let before_text = self.state_manager.editor().get_text();
+        // `apply_workspace_edit` applies its text edits through multiple internal executes, so
+        // `last_text_delta` only holds the final sub-edit. Send a full-document replacement, which
+        // is exact and keeps the LSP mirror aligned.
         let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
             let old_char_count = self.state_manager.editor().char_count();
             lsp.full_document_change(self.state_manager.editor().line_index(), old_char_count, "")
@@ -1609,6 +1633,8 @@ impl EditorView {
         // - else use `insertText`
         // - else insert `label`
         if let Some(text_edit) = obj.get("textEdit") {
+            // `apply_text_edits` runs one execute per edit, so `last_text_delta` can't capture the
+            // batch; a full-document replacement is exact and keeps the LSP mirror in sync.
             let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
                 let old_char_count = self.state_manager.editor().char_count();
                 lsp.full_document_change(

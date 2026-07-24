@@ -99,15 +99,37 @@ impl EditorView {
         self.state_manager.execute(command).is_ok()
     }
 
-    pub(super) fn execute_and_sync_text(&mut self, command: Command) -> bool {
-        let before = self.state_manager.editor().get_text();
+    /// Execute a document-mutating command and forward the *actual* edit to the LSP server via the
+    /// structured `TextDelta` the edit produced.
+    ///
+    /// Returns whether the document changed. The caller owns every other side effect (syntax,
+    /// popups, scroll, `last_insert_time`) — this only executes the command, syncs `config.text`,
+    /// and drives `didChange`.
+    ///
+    /// Why delta-based: hand-computing an incremental LSP range (`content_change_for_offsets`)
+    /// assumes how many chars an edit touched, which is wrong for auto-pair deletion (removes two
+    /// chars), re-indentation, and multi-cursor edits. `take_last_text_delta()` returns exactly
+    /// what changed, so `LspSession::did_change_from_text_delta` stays correct for all of them.
+    ///
+    /// Invariant: `last_text_delta` is overwritten (not accumulated) by each `execute`, so this
+    /// MUST run once per document edit and always take the delta — the upstream LSP mirror asserts
+    /// `delta.before_char_count == mirror_char_count`, so a skipped or doubled edit desyncs it.
+    /// Using the delta (not a `get_text()` diff) to decide `changed` keeps that mirror advancing
+    /// exactly in lockstep with core.
+    pub(super) fn execute_edit_and_sync_delta(&mut self, command: Command) -> bool {
         if !self.execute(command) {
             return false;
         }
-        let after = self.state_manager.editor().get_text();
-        if after != before {
-            self.config.text.set(after);
+        // Take unconditionally so a no-op edit can't leave a stale delta behind to be mis-sent on
+        // the next edit; only a non-empty delta represents a real change.
+        let delta = self.state_manager.take_last_text_delta();
+        let changed = delta.as_ref().is_some_and(|d| !d.is_empty());
+        if changed {
+            self.config.text.set(self.state_manager.editor().get_text());
+            if let Some(delta) = delta {
+                self.lsp_did_change_from_delta(&delta);
+            }
         }
-        true
+        changed
     }
 }
