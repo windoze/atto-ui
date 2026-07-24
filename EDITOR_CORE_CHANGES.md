@@ -239,52 +239,7 @@ if executed {
 
 ## 后续：两层 LSP 合并（需上游 per-URI 请求 API，尚未开工）
 
-### 现状
-
-`atto-editor-app` 打开一个文件会起**两个** server 进程：
-- **Layer 1（per-view）**：每个 `EditorView`（`atto-ui-editor`）自持一个 `LspSession`，负责全部
-  交互特性 + 诊断（hover/补全/签名/inlay/语义高亮/折叠/goto*/code action/formatting/rename/诊断）。
-- **Layer 2（workspace bridge）**：`LspWorkspaceBridge` 按 `(root, language)` 复用一个
-  `LspWorkspaceSync`，负责 workspace symbols + 跨文件 `workspace/applyEdit`（rename fan-out），
-  **故意丢弃诊断**以免与 Layer 1 冲突（`lsp_workspace.rs` `notification_message` 对
-  `PublishDiagnostics` 返回 `None`）。
-
-像 rust-analyzer 这类重 server，每个文件因此双开，内存/CPU 翻倍。理想是合并为「每 (root,language)
-一个共享 server」。
-
-### 为什么现在不能合并（上游限制）
-
-探查 `editor-core-lsp 0.4.3` 源码确认，`LspSession` 对**交互特性是单-active-document 的**，无法
-让一个共享 session 同时服务 N 个打开 tab：
-
-- 所有交互请求都写死 `self.document.uri`，**没有 per-URI 变体**
-  （`editor.rs:1146-1631`：`text_document_position_params` / `text_document_range_params` 及
-  formatting/semantic tokens/document symbols 等内联 `self.document.uri`）。唯一的 per-URI 接口是
-  非交互的 `did_change_for_uri(_many)` / `did_save_for_uri`。
-- 切换 active document（`set_active_document`，`editor.rs:888-912`）会
-  `drop_pending_for_inactive_document` + `clear_semantic_tokens_cache`，**丢弃**其它文档在途的
-  语义高亮/折叠请求；`handle_pending_response` 还会拒绝 `uri != self.document.uri` 的响应
-  （`:2063-2098`）。即语义高亮/折叠结构性地单-active-doc。
-- LSP 响应（`LspEvent::Response { id, method, result }`）**不带 URI**，消费方须自行维护
-  id→document 映射。
-
-### 需要上游 `editor-core-lsp` 加什么
-
-要支撑一个共享 session 服务多文档的交互特性，二选一：
-
-1. **per-URI 交互请求 API**（首选）：为每个交互请求加 `*_for_uri` 变体
-   （`request_hover_for_uri` / `request_completion_for_uri` / `request_definition_for_uri` / …
-   / `request_formatting_for_uri` / `request_semantic_tokens_full_for_uri` / …），不依赖单一
-   active document；并让 `LspEvent::Response` 携带来源 `uri`（或提供 id→uri 查询），以便消费方
-   按 (uri,id) 路由。
-2. 或提供「无副作用切换 active-doc」机制：切换时**不**丢弃其它文档的 pending 请求、不清缓存，
-   使「切 active → 发请求」模式可靠（次选，仍受限于串行 active-doc）。
-
-### atto 侧后续要做的（上游支持后）
-
-- `EditorView` 不再独占 `LspSession`；改为持有对共享 session（按 (root,language)）的引用/句柄，
-  按自身 `uri` 发 per-URI 请求，响应按 (uri,id) 路由到本 view 的 `pending_*`。
-- 诊断路由沿用 bridge 的 per-URI 方案（`publishDiagnostics` 自带 uri）。
-- 保留 3 个 standalone 消费者的可用性（`atto-ui-editor/examples/editor.rs`、
-  `src/bin/snapshot_editor_app.rs`、`tests/lsp_editor.rs`）——它们直接构造带 LSP 的 `EditorView`
-  且无 bridge，合并方案须保留「无 bridge 时 EditorView 仍能自起 session」的退化路径。
+`atto-editor-app` 每个文件双开 server（per-view `EditorView` + workspace bridge），合并为
+「每 `(root, language)` 一个共享 server」被上游 `LspSession` 的单-active-document 交互模型阻塞。
+完整背景、证据（file:line）、上游 API 建议与 atto 侧后续方案，见独立文档
+[`EDITOR_CORE_LSP_MULTIDOC.md`](./EDITOR_CORE_LSP_MULTIDOC.md)。
