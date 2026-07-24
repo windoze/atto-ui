@@ -17,11 +17,10 @@ mod terminal;
 pub use config::{
     DEFAULT_TERMINAL_PROFILE_NAME, DEFAULT_TERMINAL_SCROLL_STEP, DEFAULT_TERMINAL_SCROLLBACK_LEN,
     DEFAULT_TERMINAL_SHELL_FALLBACK, MAX_TERMINAL_SCROLLBACK_LEN,
-    TerminalAlternateScreenScrollConfig, TerminalColorSpec,
-    TerminalConfig, TerminalConfigFormat, TerminalCursorConfig, TerminalCursorShapeConfig,
-    TerminalPaletteConfig, TerminalProfileConfig, TerminalSessionsConfig,
-    TerminalShellIntegrationConfig, TerminalShortcutConfig, TerminalShortcutModifier,
-    TerminalTmuxEnvironmentConfig,
+    TerminalAlternateScreenScrollConfig, TerminalColorSpec, TerminalConfig, TerminalConfigFormat,
+    TerminalCursorConfig, TerminalCursorShapeConfig, TerminalPaletteConfig, TerminalProfileConfig,
+    TerminalSessionsConfig, TerminalShellIntegrationConfig, TerminalShortcutConfig,
+    TerminalShortcutModifier, TerminalTmuxEnvironmentConfig,
 };
 pub use dynamic::{
     register_runtime_components, register_terminal_emulator, terminal_emulator_schema,

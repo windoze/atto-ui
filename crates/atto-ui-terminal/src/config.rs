@@ -131,8 +131,7 @@ impl TerminalConfig {
                 // Best-effort cleanup so a failed rename doesn't leave the temp
                 // file behind.
                 let _ = fs::remove_file(&tmp_path);
-                Err(error)
-                    .with_context(|| format!("replace terminal config {}", path.display()))
+                Err(error).with_context(|| format!("replace terminal config {}", path.display()))
             }
         }
     }

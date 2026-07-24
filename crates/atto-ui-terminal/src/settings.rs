@@ -449,9 +449,9 @@ impl TerminalSettingsHandle {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
-            if let Err(error) = fs::create_dir_all(parent).with_context(|| {
-                format!("create terminal config directory {}", parent.display())
-            }) {
+            if let Err(error) = fs::create_dir_all(parent)
+                .with_context(|| format!("create terminal config directory {}", parent.display()))
+            {
                 self.status
                     .set(format!("Error: {}", first_error_line(&error)));
                 return Err(error);

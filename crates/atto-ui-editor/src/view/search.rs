@@ -336,11 +336,12 @@ impl EditorView {
 
         // `ReplaceCurrent` is a single command → one structured delta; the helper forwards exactly
         // the replaced span to the LSP server.
-        let changed = self.execute_edit_and_sync_delta(Command::Edit(EditCommand::ReplaceCurrent {
-            query,
-            replacement,
-            options: self.search.options,
-        }));
+        let changed =
+            self.execute_edit_and_sync_delta(Command::Edit(EditCommand::ReplaceCurrent {
+                query,
+                replacement,
+                options: self.search.options,
+            }));
         if changed {
             self.maybe_apply_syntax_highlighting();
             self.apply_search_highlighting();

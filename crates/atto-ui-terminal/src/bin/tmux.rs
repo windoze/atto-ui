@@ -410,7 +410,8 @@ fn append_key_bytes(key: &str, literal: bool, output: &mut Vec<u8>) -> Result<()
             // produce a nonsense value from `& 0x1f`.
             let byte = value.as_bytes()[2].to_ascii_uppercase();
             ensure!(
-                byte.is_ascii_uppercase() || matches!(byte, b'@' | b'[' | b'\\' | b']' | b'^' | b'_'),
+                byte.is_ascii_uppercase()
+                    || matches!(byte, b'@' | b'[' | b'\\' | b']' | b'^' | b'_'),
                 "unsupported control key {value:?}; expected C-<letter> or C-@[\\]^_"
             );
             output.push(byte & 0x1f);

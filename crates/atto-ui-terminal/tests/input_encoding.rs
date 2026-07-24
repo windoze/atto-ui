@@ -1225,17 +1225,11 @@ fn terminal_prefix_key_can_be_configured_to_plain_ctrl_letter() {
 fn terminal_ctrl_space_sends_nul() {
     // Ctrl+Space (and Ctrl+@) send NUL (0x00), matching xterm.
     assert_eq!(
-        key_event_input_after_output(
-            "",
-            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL)
-        ),
+        key_event_input_after_output("", KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL)),
         b"\x00"
     );
     assert_eq!(
-        key_event_input_after_output(
-            "",
-            KeyEvent::new(KeyCode::Char('@'), KeyModifiers::CONTROL)
-        ),
+        key_event_input_after_output("", KeyEvent::new(KeyCode::Char('@'), KeyModifiers::CONTROL)),
         b"\x00"
     );
 }

@@ -202,7 +202,8 @@ fn click_settings_button(
         });
         // Click the middle of the label so we land on the button body.
         let cx = bx + (UnicodeWidthStr::width(label) as u16) / 2;
-        host.click(cx, by).unwrap_or_else(|e| panic!("click {label:?}: {e}"));
+        host.click(cx, by)
+            .unwrap_or_else(|e| panic!("click {label:?}: {e}"));
         thread::sleep(Duration::from_millis(40));
         if settled(host) {
             return;
@@ -450,9 +451,7 @@ fn click_file_dropdown_item(host: &mut PtyTestHost, label: &str) {
             }
         }
         if Instant::now() >= deadline {
-            panic!(
-                "menu item {label:?} not found in dropdown\n--- screen ---\n{screen}"
-            );
+            panic!("menu item {label:?} not found in dropdown\n--- screen ---\n{screen}");
         }
         thread::sleep(Duration::from_millis(20));
     }
