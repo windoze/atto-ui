@@ -62,7 +62,20 @@ impl EditorWindowView {
             return;
         }
 
-        let disk_text = std::fs::read_to_string(&path).unwrap_or_default();
+        // Only a genuinely missing file opens as an empty buffer (new file). Any other read error
+        // — permission denied, non-UTF-8, transient IO — must NOT open a fake-empty document: it
+        // would present as clean and a later Save would `fs::write` the empty text back, silently
+        // truncating the real file on disk.
+        let disk_text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(err) => {
+                self.workspace_state
+                    .lock()
+                    .record_error(format!("无法打开文件 {}: {err}", path.display()));
+                return;
+            }
+        };
         let title_base = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -739,5 +752,45 @@ mod tests {
         );
         assert_eq!(window.tabs[0].text.get(), "alpha\nbeta\ngamma");
         assert!(!window.tabs[0].is_dirty);
+    }
+
+    #[test]
+    fn opening_missing_file_creates_one_empty_new_file_tab() {
+        let root = unique_temp_dir("missing");
+        fs::create_dir_all(&root).expect("create temp root");
+        let path = root.join("brand_new.rs");
+        assert!(!path.exists());
+
+        let mut window = test_window();
+        window.open_file_in_tab(path.clone());
+
+        // A genuinely missing file is a valid "new file": one empty tab, no error.
+        assert_eq!(window.tabs.len(), 1);
+        assert_eq!(window.tabs[0].text.get(), "");
+        assert!(window.workspace_state.lock().take_last_error().is_none());
+    }
+
+    #[test]
+    fn opening_unreadable_file_does_not_open_a_truncating_tab() {
+        // A non-UTF-8 file exists on disk but `read_to_string` rejects it (InvalidData). The old
+        // `unwrap_or_default()` would open it as an empty, clean buffer; a later Save would then
+        // `fs::write` the empty text back and destroy the file. Assert we refuse to open it and
+        // surface an error instead — so the bytes on disk are never at risk.
+        let root = unique_temp_dir("unreadable");
+        fs::create_dir_all(&root).expect("create temp root");
+        let path = root.join("binary.bin");
+        let original = [0xff, 0xfe, b'd', b'a', b't', b'a'];
+        fs::write(&path, original).expect("write non-utf8 file");
+
+        let mut window = test_window();
+        window.open_file_in_tab(path.clone());
+
+        assert_eq!(window.tabs.len(), 0, "unreadable file must not open a tab");
+        assert!(
+            window.workspace_state.lock().take_last_error().is_some(),
+            "read failure should surface an error"
+        );
+        // The original bytes are untouched.
+        assert_eq!(fs::read(&path).expect("re-read file"), original);
     }
 }

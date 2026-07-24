@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
-use editor_core::{SearchMatch, SearchOptions};
+use editor_core::{CompiledSearch, SearchMatch, SearchOptions};
 use ignore::WalkBuilder;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,9 +38,14 @@ pub fn search_workspace(
         return Ok(Vec::new());
     }
 
+    // Compile the query once and reuse it for every line of every file. `find_all` would otherwise
+    // rebuild the regex on each call, making a workspace search O(files × lines) regex compiles.
+    let search = CompiledSearch::new(query, options)
+        .with_context(|| format!("compiling search query {query:?}"))?;
+
     let mut results = Vec::new();
     for root in roots {
-        search_root(root, query, options, config, &mut results)?;
+        search_root(root, &search, config, &mut results)?;
         if results.len() >= config.max_total_matches {
             break;
         }
@@ -50,8 +55,7 @@ pub fn search_workspace(
 
 fn search_root(
     root: &Path,
-    query: &str,
-    options: SearchOptions,
+    search: &CompiledSearch,
     config: GlobalSearchConfig,
     results: &mut Vec<GlobalSearchResult>,
 ) -> Result<()> {
@@ -97,8 +101,7 @@ fn search_root(
         };
         let text = normalize_newlines_to_lf(&text);
         for (line, line_text) in text.lines().enumerate() {
-            let ranges = editor_core::search::find_all(line_text, query, options)
-                .with_context(|| format!("searching {}", path.display()))?;
+            let ranges = search.find_all(line_text);
             let Some(first) = ranges.first().copied() else {
                 continue;
             };
