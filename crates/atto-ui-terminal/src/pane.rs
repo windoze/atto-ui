@@ -688,9 +688,11 @@ impl TerminalPaneGroupShared {
         let removing_active = self.active_id == Some(pane_id);
         // Preserve the outgoing active pane's capture state so closing a pane
         // doesn't silently flip the survivor back into capture mode.
-        let preserved_capture = removing_active
-            .then(|| self.panes[index].handle.capture())
-            .unwrap_or(true);
+        let preserved_capture = if removing_active {
+            self.panes[index].handle.capture()
+        } else {
+            true
+        };
         // Pick the spatially-nearest surviving pane to inherit focus, rather
         // than always jumping to the first-created pane.
         let successor = removing_active
