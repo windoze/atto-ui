@@ -6,7 +6,10 @@ use std::process::Command as ProcessCommand;
 use std::time::Duration;
 
 use editor_core::{BufferId, LineIndex, Workspace, WorkspaceSymbol};
-use editor_core_lsp::{ApplyWorkspaceEditResult, LspEvent, LspNotification, LspWorkspaceSync};
+use editor_core_lsp::{
+    ApplyWorkspaceEditResult, LspEvent, LspNotification, LspPublishDiagnosticsParams, LspSession,
+    LspWorkspaceSync, SemanticTokensLegend,
+};
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -38,8 +41,15 @@ pub enum LspWorkspaceEvent {
 pub struct LspWorkspaceBridge {
     pub lsp_by_root_language: HashMap<LspKey, LspWorkspaceSync>,
     document_keys: HashMap<BufferId, LspKey>,
-    pending_workspace_symbols: HashMap<(LspKey, u64), String>,
+    pending_workspace_symbols: HashMap<(LspKey, u64), PendingWorkspaceSymbols>,
+    document_events: HashMap<BufferId, Vec<LspEvent>>,
     active_document: Option<ActiveWorkspaceDocument>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PendingWorkspaceSymbols {
+    App(String),
+    Document { buffer_id: BufferId },
 }
 
 impl LspWorkspaceBridge {
@@ -93,8 +103,8 @@ impl LspWorkspaceBridge {
         sync.set_auto_apply_workspace_edits(false);
         sync.session_mut().set_auto_refresh_options(
             editor_core_lsp::editor::LspAutoRefreshOptions {
-                semantic_tokens: cfg.semantic_tokens,
-                folding_ranges: cfg.folding_ranges,
+                semantic_tokens: false,
+                folding_ranges: false,
                 delay: Duration::from_millis(150),
             },
         );
@@ -136,6 +146,8 @@ impl LspWorkspaceBridge {
         // Drop any in-flight workspace-symbol requests bound to this key so their ids can't dangle.
         self.pending_workspace_symbols
             .retain(|(pending_key, _), _| pending_key != key);
+        self.document_events
+            .retain(|buffer_id, _| self.document_keys.contains_key(buffer_id));
         if let Some(mut sync) = self.lsp_by_root_language.remove(key) {
             // Best-effort graceful shutdown; `exit()` kills and reaps the child even without a
             // prior shutdown handshake.
@@ -181,6 +193,75 @@ impl LspWorkspaceBridge {
         sync.did_change_from_text_delta(workspace, buffer_id)
     }
 
+    pub fn drain_document_events(&mut self, buffer_id: BufferId) -> Vec<LspEvent> {
+        self.document_events.remove(&buffer_id).unwrap_or_default()
+    }
+
+    pub fn document_uri(&self, workspace: &Workspace, buffer_id: BufferId) -> Option<String> {
+        workspace
+            .buffer_metadata(buffer_id)
+            .and_then(|meta| meta.uri.clone())
+    }
+
+    pub fn session_for_buffer(&self, buffer_id: BufferId) -> Result<&LspSession, String> {
+        let key = self
+            .document_keys
+            .get(&buffer_id)
+            .ok_or_else(|| format!("No LSP key for buffer {}", buffer_id.get()))?;
+        self.lsp_by_root_language
+            .get(key)
+            .map(LspWorkspaceSync::session)
+            .ok_or_else(|| {
+                format!(
+                    "No workspace LSP session for buffer {} ({})",
+                    buffer_id.get(),
+                    key.language_id
+                )
+            })
+    }
+
+    pub fn session_mut_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+    ) -> Result<&mut LspSession, String> {
+        let key = self
+            .document_keys
+            .get(&buffer_id)
+            .cloned()
+            .ok_or_else(|| format!("No LSP key for buffer {}", buffer_id.get()))?;
+        self.lsp_by_root_language
+            .get_mut(&key)
+            .map(LspWorkspaceSync::session_mut)
+            .ok_or_else(|| {
+                format!(
+                    "No workspace LSP session for buffer {} ({})",
+                    buffer_id.get(),
+                    key.language_id
+                )
+            })
+    }
+
+    pub fn supports_semantic_tokens(&self, buffer_id: BufferId) -> bool {
+        self.session_for_buffer(buffer_id)
+            .is_ok_and(LspSession::supports_semantic_tokens)
+    }
+
+    pub fn supports_semantic_tokens_delta(&self, buffer_id: BufferId) -> bool {
+        self.session_for_buffer(buffer_id)
+            .is_ok_and(LspSession::supports_semantic_tokens_delta)
+    }
+
+    pub fn supports_folding_ranges(&self, buffer_id: BufferId) -> bool {
+        self.session_for_buffer(buffer_id)
+            .is_ok_and(LspSession::supports_folding_range)
+    }
+
+    pub fn semantic_legend(&self, buffer_id: BufferId) -> Option<SemanticTokensLegend> {
+        self.session_for_buffer(buffer_id)
+            .ok()
+            .and_then(|session| session.semantic_legend().cloned())
+    }
+
     pub fn request_workspace_symbols(&mut self, query: String) -> Result<bool, String> {
         let Some(active) = self.active_document.as_ref() else {
             return Ok(false);
@@ -189,9 +270,34 @@ impl LspWorkspaceBridge {
             return Ok(false);
         };
         let id = sync.session_mut().request_workspace_symbol(query.clone())?;
-        self.pending_workspace_symbols
-            .insert((active.key.clone(), id), query);
+        self.pending_workspace_symbols.insert(
+            (active.key.clone(), id),
+            PendingWorkspaceSymbols::App(query),
+        );
         Ok(true)
+    }
+
+    pub fn request_workspace_symbols_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        query: String,
+    ) -> Result<u64, String> {
+        let key = self
+            .document_keys
+            .get(&buffer_id)
+            .cloned()
+            .ok_or_else(|| format!("No LSP key for buffer {}", buffer_id.get()))?;
+        let Some(sync) = self.lsp_by_root_language.get_mut(&key) else {
+            return Err(format!(
+                "No workspace LSP session for buffer {} ({})",
+                buffer_id.get(),
+                key.language_id
+            ));
+        };
+        let id = sync.session_mut().request_workspace_symbol(query.clone())?;
+        self.pending_workspace_symbols
+            .insert((key, id), PendingWorkspaceSymbols::Document { buffer_id });
+        Ok(id)
     }
 
     pub fn apply_workspace_edit(
@@ -219,6 +325,7 @@ impl LspWorkspaceBridge {
             .cloned()
             .collect::<Vec<_>>();
         for key in keys {
+            let mut routed_document_events = Vec::<(BufferId, LspEvent)>::new();
             let Some(sync) = self.lsp_by_root_language.get_mut(&key) else {
                 continue;
             };
@@ -248,16 +355,33 @@ impl LspWorkspaceBridge {
                 match event {
                     LspEvent::Response(response) => {
                         if response.method == "workspace/symbol"
-                            && let Some(query) = self
+                            && let Some(pending) = self
                                 .pending_workspace_symbols
                                 .remove(&(key.clone(), response.id))
                         {
-                            let symbols = response
-                                .result
-                                .as_ref()
-                                .map(editor_core_lsp::lsp_workspace_symbols_to_results)
-                                .unwrap_or_default();
-                            events.push(LspWorkspaceEvent::WorkspaceSymbols { query, symbols });
+                            match pending {
+                                PendingWorkspaceSymbols::App(query) => {
+                                    let symbols = response
+                                        .result
+                                        .as_ref()
+                                        .map(editor_core_lsp::lsp_workspace_symbols_to_results)
+                                        .unwrap_or_default();
+                                    events.push(LspWorkspaceEvent::WorkspaceSymbols {
+                                        query,
+                                        symbols,
+                                    });
+                                }
+                                PendingWorkspaceSymbols::Document { buffer_id, .. } => {
+                                    routed_document_events
+                                        .push((buffer_id, LspEvent::Response(response)));
+                                }
+                            }
+                        } else if let Some(buffer_id) = response
+                            .uri
+                            .as_deref()
+                            .and_then(|uri| workspace.buffer_id_for_uri(uri))
+                        {
+                            routed_document_events.push((buffer_id, LspEvent::Response(response)));
                         }
                     }
                     LspEvent::DeferredRequest(request)
@@ -296,12 +420,21 @@ impl LspWorkspaceBridge {
                         }
                     }
                     LspEvent::Notification(notification) => {
-                        if let Some(message) = notification_message(notification) {
+                        if let LspNotification::PublishDiagnostics(params) = &notification
+                            && diagnostics_version_matches(sync.session(), params)
+                            && let Some(buffer_id) = workspace.buffer_id_for_uri(&params.uri)
+                        {
+                            routed_document_events
+                                .push((buffer_id, LspEvent::Notification(notification)));
+                        } else if let Some(message) = notification_message(notification) {
                             events.push(LspWorkspaceEvent::Message(message));
                         }
                     }
                     LspEvent::DeferredRequest(_) => {}
                 }
+            }
+            for (buffer_id, event) in routed_document_events {
+                self.push_document_event(buffer_id, event);
             }
         }
         events
@@ -311,6 +444,13 @@ impl LspWorkspaceBridge {
         workspace
             .active_buffer_id()
             .and_then(|buffer_id| self.document_keys.get(&buffer_id).cloned())
+    }
+
+    fn push_document_event(&mut self, buffer_id: BufferId, event: LspEvent) {
+        self.document_events
+            .entry(buffer_id)
+            .or_default()
+            .push(event);
     }
 }
 
@@ -425,6 +565,14 @@ fn workspace_root_for_path(roots: &[PathBuf], path: &Path) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+fn diagnostics_version_matches(session: &LspSession, params: &LspPublishDiagnosticsParams) -> bool {
+    match (params.version, session.document_for_uri(&params.uri)) {
+        (None, _) => true,
+        (Some(version), Some(document)) => version == document.version,
+        (Some(_), None) => false,
+    }
+}
+
 fn notification_message(notification: LspNotification) -> Option<String> {
     match notification {
         LspNotification::ShowMessage(message) => Some(message.message),
@@ -515,9 +663,10 @@ mod tests {
         };
         let mut bridge = LspWorkspaceBridge::default();
         // A pending workspace-symbol request bound to this key must be cleared on retirement.
-        bridge
-            .pending_workspace_symbols
-            .insert((key.clone(), 7), "query".to_string());
+        bridge.pending_workspace_symbols.insert(
+            (key.clone(), 7),
+            PendingWorkspaceSymbols::App("query".to_string()),
+        );
         // No document_keys entries reference the key → it is unused.
         assert!(bridge.retire_key_if_unused(&key));
         assert!(
@@ -543,9 +692,10 @@ mod tests {
         let mut bridge = LspWorkspaceBridge::default();
         bridge.document_keys.insert(a.buffer_id, key.clone());
         // Pending request for an unrelated key must survive when `key` stays in use.
-        bridge
-            .pending_workspace_symbols
-            .insert((other_key.clone(), 1), "q".to_string());
+        bridge.pending_workspace_symbols.insert(
+            (other_key.clone(), 1),
+            PendingWorkspaceSymbols::App("q".to_string()),
+        );
 
         assert!(!bridge.retire_key_if_unused(&key));
         assert!(

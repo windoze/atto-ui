@@ -75,6 +75,7 @@ impl DocumentTabView {
         language_id: String,
         syntax: atto_ui_editor::EditorSyntaxConfig,
         lsp: atto_ui_editor::EditorLspMode,
+        lsp_client: Option<atto_ui_editor::SharedEditorLspClient>,
     ) -> (Self, atto_ui_editor::EditorViewHandle) {
         let (primary, primary_handle) = build_editor_view(
             text.clone(),
@@ -84,6 +85,7 @@ impl DocumentTabView {
             language_id.clone(),
             syntax.clone(),
             lsp.clone(),
+            lsp_client,
         );
 
         let view = Self {
@@ -187,6 +189,7 @@ impl DocumentTabView {
             self.language_id.clone(),
             self.syntax.clone(),
             atto_ui_editor::EditorLspMode::Disabled,
+            None,
         );
         self.secondary = Some(secondary);
         self.focused = SplitFocus::Secondary;
@@ -800,6 +803,7 @@ fn build_editor_view(
     language_id: String,
     syntax: atto_ui_editor::EditorSyntaxConfig,
     lsp: atto_ui_editor::EditorLspMode,
+    lsp_client: Option<atto_ui_editor::SharedEditorLspClient>,
 ) -> (atto_ui_editor::EditorView, atto_ui_editor::EditorViewHandle) {
     let mut cfg = atto_ui_editor::EditorConfig::new(text);
     cfg.clipboard = clipboard;
@@ -820,5 +824,9 @@ fn build_editor_view(
     cfg.syntax.set(syntax);
     cfg.lsp.set(lsp);
 
-    atto_ui_editor::EditorView::new(cfg, theme)
+    let (mut view, handle) = atto_ui_editor::EditorView::new(cfg, theme);
+    if let Some(client) = lsp_client {
+        view.set_lsp_client(client);
+    }
+    (view, handle)
 }

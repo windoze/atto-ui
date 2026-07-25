@@ -25,6 +25,7 @@ pub mod picker;
 pub mod search;
 pub mod window;
 pub mod workspace;
+pub mod workspace_lsp_client;
 pub mod workspace_state;
 
 pub use app::{AttoEditorConfig, run};

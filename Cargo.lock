@@ -928,9 +928,7 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "editor-core"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d288401d5c252a755b9e6b553345a1967f18325c125f3d2de7093295706ea86b"
+version = "0.5.0"
 dependencies = [
  "editor-core-lang",
  "regex",
@@ -941,18 +939,14 @@ dependencies = [
 
 [[package]]
 name = "editor-core-diff"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3716d710945c45c30142402ee9f14b0e640a7761f9b61a7ee6a7209d6c343346"
+version = "0.5.0"
 dependencies = [
  "imara-diff",
 ]
 
 [[package]]
 name = "editor-core-diff-view"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b7b082321848dd52f10adafb189f82b53298d1805a2ebd306939c8b6d325ad3"
+version = "0.5.0"
 dependencies = [
  "editor-core",
  "editor-core-diff",
@@ -960,9 +954,7 @@ dependencies = [
 
 [[package]]
 name = "editor-core-highlight-simple"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29d1b715b0bdc8c84d57b5eb2d707a724e56ad5bd81f46f81a1a4c59c91e75f4"
+version = "0.5.0"
 dependencies = [
  "editor-core",
  "regex",
@@ -970,15 +962,11 @@ dependencies = [
 
 [[package]]
 name = "editor-core-lang"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe554e58684aa0914958602131dab2e841a80c2fb2e42b8eff2855e7fa59ecb6"
+version = "0.5.0"
 
 [[package]]
 name = "editor-core-lsp"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "feef4553213559599de8eed7be7e051fc7db92a1ce451e87fd361b26ab79e644"
+version = "0.5.0"
 dependencies = [
  "editor-core",
  "serde_json",
@@ -986,9 +974,7 @@ dependencies = [
 
 [[package]]
 name = "editor-core-sublime"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f74341c0a5f28176f15f5939e9624686ae0f6a69de58e86ab001b748abe87a06"
+version = "0.5.0"
 dependencies = [
  "editor-core",
  "onig",
@@ -1000,9 +986,7 @@ dependencies = [
 
 [[package]]
 name = "editor-core-treesitter"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ff9e1e309426ac5284a5d4fb9da92a0b21366eb45e21be6a71fab7eb2cd450e"
+version = "0.5.0"
 dependencies = [
  "editor-core",
  "serde",

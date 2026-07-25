@@ -1,24 +1,41 @@
 // LSP integration + hover/completion popup plumbing.
 
 use super::*;
+use crate::lsp_client::{LocalLspClient, shared_lsp_client};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 impl EditorView {
+    /// Inject an externally managed LSP client.
+    ///
+    /// This is used by `atto-editor-app` to bind the view to the workspace-shared
+    /// `(workspace_root, language)` LSP session instead of starting a per-view server.
+    pub fn set_lsp_client(&mut self, client: SharedEditorLspClient) {
+        self.lsp.client = Some(client);
+        self.reset_inlay_hint_tracking();
+        self.reset_shared_derived_state();
+        editor_core_lsp::clear_lsp_state(&mut self.state_manager);
+        self.clear_lsp_diagnostics();
+        self.maybe_apply_syntax_highlighting();
+    }
+
     pub(super) fn start_lsp_if_enabled(&mut self) {
-        let EditorLspMode::Enabled(cfg) = self.config.lsp.get() else {
-            return;
-        };
-        self.start_lsp_session(cfg);
+        if let EditorLspMode::Enabled(cfg) = self.config.lsp.get() {
+            self.start_lsp_session(cfg);
+        }
     }
 
     pub(super) fn lsp_did_change(&mut self, change: LspContentChange) {
-        let result = {
-            let Some(lsp) = self.lsp.session.as_mut() else {
-                return;
-            };
-            lsp.did_change(change)
+        let Some(uri) = self.current_lsp_uri() else {
+            return;
         };
+        let Some(client) = self.lsp.client.clone() else {
+            return;
+        };
+        let result = client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .did_change(&uri, change);
         self.handle_did_change_result(result);
     }
 
@@ -27,19 +44,24 @@ impl EditorView {
     /// multi-char edits (auto-pair deletion, re-indentation, multi-cursor). See
     /// `execute_edit_and_sync_delta`.
     pub(super) fn lsp_did_change_from_delta(&mut self, delta: &editor_core::TextDelta) {
-        let result = {
-            let Some(lsp) = self.lsp.session.as_mut() else {
-                return;
-            };
-            lsp.did_change_from_text_delta(delta)
+        let Some(uri) = self.current_lsp_uri() else {
+            return;
         };
+        let Some(client) = self.lsp.client.clone() else {
+            return;
+        };
+        let result = client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .did_change_from_delta(&uri, delta);
         self.handle_did_change_result(result);
     }
 
     fn handle_did_change_result(&mut self, result: Result<(), String>) {
         if result.is_err() {
-            self.lsp.session = None;
+            self.lsp.client = None;
             self.reset_inlay_hint_tracking();
+            self.reset_shared_derived_state();
             editor_core_lsp::clear_lsp_state(&mut self.state_manager);
             self.clear_lsp_diagnostics();
             self.maybe_apply_syntax_highlighting();
@@ -47,32 +69,31 @@ impl EditorView {
     }
 
     pub(super) fn maybe_poll_lsp(&mut self) {
-        let poll_result = {
-            let Some(lsp) = self.lsp.session.as_mut() else {
-                return;
-            };
-            self.state_manager.apply_processor(lsp)
-        };
-
-        if let Err(err) = poll_result {
-            self.finish_pending_formatting_failure(format!(
-                "Formatting failed: LSP session error: {err}"
-            ));
-            self.lsp.session = None;
-            self.reset_inlay_hint_tracking();
-            editor_core_lsp::clear_lsp_state(&mut self.state_manager);
-            self.clear_lsp_diagnostics();
-            self.maybe_apply_syntax_highlighting();
+        let Some(client) = self.lsp.client.clone() else {
             return;
-        }
-
-        // Drain events (diagnostics notifications, hover/completion/goto responses, UX messages, etc.)
-        let events = {
-            let Some(lsp) = self.lsp.session.as_mut() else {
-                return;
-            };
-            lsp.drain_events()
         };
+
+        let poll_result = client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .poll(&mut self.state_manager);
+
+        let events = match poll_result {
+            Ok(events) => events,
+            Err(err) => {
+                self.finish_pending_formatting_failure(format!(
+                    "Formatting failed: LSP session error: {err}"
+                ));
+                self.lsp.client = None;
+                self.reset_inlay_hint_tracking();
+                self.reset_shared_derived_state();
+                editor_core_lsp::clear_lsp_state(&mut self.state_manager);
+                self.clear_lsp_diagnostics();
+                self.maybe_apply_syntax_highlighting();
+                return;
+            }
+        };
+
         for ev in events {
             match ev {
                 editor_core_lsp::LspEvent::Notification(
@@ -83,10 +104,17 @@ impl EditorView {
                 editor_core_lsp::LspEvent::Response(resp) => self.handle_lsp_response(resp),
             }
         }
+        self.maybe_request_shared_derived_state();
         self.maybe_timeout_pending_formatting();
     }
 
     pub(super) fn handle_lsp_response(&mut self, resp: editor_core_lsp::LspResponse) {
+        if let Some(response_uri) = resp.uri.as_deref()
+            && self.current_lsp_uri().as_deref() != Some(response_uri)
+        {
+            return;
+        }
+
         let method = resp.method;
         let id = resp.id;
         let result = resp.result;
@@ -134,6 +162,10 @@ impl EditorView {
                 .unwrap_or_default();
             self.events
                 .push(EditorEvent::WorkspaceSymbols { query, symbols });
+        }
+
+        if self.handle_shared_derived_response(id, &method, result.as_ref(), error.as_ref()) {
+            return;
         }
 
         if let Some(pending_id) = self.lsp.hover_pending_request
@@ -345,17 +377,7 @@ impl EditorView {
         &self,
         params: &editor_core_lsp::LspPublishDiagnosticsParams,
     ) -> bool {
-        let Some(lsp) = self.lsp.session.as_ref() else {
-            return false;
-        };
-        let document = lsp.document();
-        if params.uri != document.uri {
-            return false;
-        }
-        match params.version {
-            Some(version) => version == document.version,
-            None => true,
-        }
+        self.current_lsp_uri().is_some_and(|uri| params.uri == uri)
     }
 
     pub(super) fn apply_current_document_diagnostics(
@@ -401,6 +423,158 @@ impl EditorView {
         self.set_diagnostics_summary(DiagnosticsSummary::default());
     }
 
+    fn current_lsp_uri(&self) -> Option<String> {
+        self.lsp
+            .client
+            .as_ref()?
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .uri()
+    }
+
+    fn lsp_client_and_uri(&self) -> Option<(SharedEditorLspClient, String)> {
+        let client = self.lsp.client.clone()?;
+        let uri = client.lock().expect("LSP client mutex poisoned").uri()?;
+        Some((client, uri))
+    }
+
+    fn reset_shared_derived_state(&mut self) {
+        self.lsp.pending_semantic_tokens = None;
+        self.lsp.pending_folding_ranges = None;
+        self.lsp.semantic_result_id = None;
+        self.lsp.semantic_data.clear();
+        self.lsp.semantic_legend = None;
+        self.lsp.last_derived_request_at = None;
+    }
+
+    fn maybe_request_shared_derived_state(&mut self) {
+        let Some((client, uri)) = self.lsp_client_and_uri() else {
+            return;
+        };
+        if client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .applies_derived_state_in_poll()
+        {
+            return;
+        }
+
+        let cfg = match self.config.lsp.get() {
+            EditorLspMode::External(cfg) | EditorLspMode::Enabled(cfg) => cfg,
+            EditorLspMode::Disabled => return,
+        };
+
+        let delay = Duration::from_millis(150);
+        if let Some(last) = self.lsp.last_derived_request_at
+            && last.elapsed() < delay
+        {
+            return;
+        }
+
+        let revision = self.current_inlay_text_revision();
+        let mut requested = false;
+        let mut lsp = client.lock().expect("LSP client mutex poisoned");
+        self.lsp.semantic_legend = lsp.semantic_legend();
+
+        if cfg.semantic_tokens
+            && lsp.supports_semantic_tokens()
+            && !self
+                .lsp
+                .pending_semantic_tokens
+                .is_some_and(|(_, pending_revision)| pending_revision == revision)
+        {
+            let request =
+                if lsp.supports_semantic_tokens_delta() && self.lsp.semantic_result_id.is_some() {
+                    lsp.request_semantic_tokens_delta(&uri, self.lsp.semantic_result_id.clone())
+                } else {
+                    lsp.request_semantic_tokens_full(&uri)
+                };
+            if let Ok(id) = request {
+                self.lsp.pending_semantic_tokens = Some((id, revision));
+                requested = true;
+            }
+        }
+
+        if cfg.folding_ranges
+            && lsp.supports_folding_ranges()
+            && !self
+                .lsp
+                .pending_folding_ranges
+                .is_some_and(|(_, pending_revision)| pending_revision == revision)
+        {
+            if let Ok(id) = lsp.request_folding_ranges(&uri) {
+                self.lsp.pending_folding_ranges = Some((id, revision));
+                requested = true;
+            }
+        }
+
+        if requested {
+            self.lsp.last_derived_request_at = Some(Instant::now());
+        }
+    }
+
+    fn handle_shared_derived_response(
+        &mut self,
+        id: u64,
+        method: &str,
+        result: Option<&serde_json::Value>,
+        error: Option<&editor_core_lsp::LspResponseError>,
+    ) -> bool {
+        if let Some((pending_id, revision)) = self.lsp.pending_semantic_tokens
+            && pending_id == id
+            && matches!(
+                method,
+                "textDocument/semanticTokens/full"
+                    | "textDocument/semanticTokens/full/delta"
+                    | "textDocument/semanticTokens/range"
+            )
+        {
+            self.lsp.pending_semantic_tokens = None;
+            if error.is_some() || revision != self.current_inlay_text_revision() {
+                return true;
+            }
+            let value = result.unwrap_or(&serde_json::Value::Null);
+            let line_index = self.state_manager.editor().line_index().clone();
+            let baseline = self.lsp.semantic_data.clone();
+            if let Some(update) = crate::lsp_client::semantic_tokens_update_for_view(
+                value,
+                &baseline,
+                self.lsp.semantic_legend.as_ref(),
+                &line_index,
+            ) {
+                self.lsp.semantic_result_id = update.result_id;
+                self.lsp.semantic_data = update.data;
+                if let Some(edit) = update.edit {
+                    self.state_manager.apply_processing_edits([edit]);
+                }
+            } else if value
+                .get("edits")
+                .and_then(serde_json::Value::as_array)
+                .is_some()
+            {
+                self.lsp.semantic_result_id = None;
+                self.lsp.semantic_data.clear();
+            }
+            return true;
+        }
+
+        if let Some((pending_id, revision)) = self.lsp.pending_folding_ranges
+            && pending_id == id
+            && method == "textDocument/foldingRange"
+        {
+            self.lsp.pending_folding_ranges = None;
+            if error.is_some() || revision != self.current_inlay_text_revision() {
+                return true;
+            }
+            let value = result.unwrap_or(&serde_json::Value::Null);
+            let edit = crate::lsp_client::folding_ranges_edit_for_view(value);
+            self.state_manager.apply_processing_edits([edit]);
+            return true;
+        }
+
+        false
+    }
+
     pub(super) fn maybe_start_or_stop_lsp(&mut self) {
         if !self.config.lsp.check_dirty(&mut self.lsp_observer) {
             return;
@@ -408,8 +582,9 @@ impl EditorView {
 
         match self.config.lsp.get() {
             EditorLspMode::Disabled => {
-                self.lsp.session = None;
+                self.lsp.client = None;
                 self.reset_inlay_hint_tracking();
+                self.reset_shared_derived_state();
                 editor_core_lsp::clear_lsp_state(&mut self.state_manager);
                 self.clear_lsp_diagnostics();
                 self.maybe_apply_syntax_highlighting();
@@ -417,13 +592,15 @@ impl EditorView {
             }
             EditorLspMode::Enabled(cfg) => {
                 // Best-effort restart on changes.
-                self.lsp.session = None;
+                self.lsp.client = None;
                 self.reset_inlay_hint_tracking();
+                self.reset_shared_derived_state();
                 editor_core_lsp::clear_lsp_state(&mut self.state_manager);
                 self.clear_lsp_diagnostics();
                 self.hide_popups();
                 self.start_lsp_session(cfg);
             }
+            EditorLspMode::External(_) => {}
         }
     }
 
@@ -544,7 +721,7 @@ impl EditorView {
                 folding_ranges: cfg.folding_ranges,
                 delay: Duration::from_millis(150),
             });
-            self.lsp.session = Some(session);
+            self.lsp.client = Some(shared_lsp_client(LocalLspClient::new(session)));
         }
     }
 
@@ -791,15 +968,20 @@ impl EditorView {
     }
 
     fn request_hover_at_anchor(&mut self, anchor: HoverAnchor) {
-        let Some(lsp) = self.lsp.session.as_mut() else {
+        let Some((client, uri)) = self.lsp_client_and_uri() else {
             return;
         };
         let pos = anchor.position;
-        if let Ok(id) = lsp.request_hover(
-            self.state_manager.editor().line_index(),
-            pos.line,
-            pos.column,
-        ) {
+        if let Ok(id) = client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .request_hover(
+                &uri,
+                self.state_manager.editor().line_index(),
+                pos.line,
+                pos.column,
+            )
+        {
             self.lsp.hover_pending_request = Some(id);
             self.lsp.hover_requested = Some(anchor);
         }
@@ -828,14 +1010,19 @@ impl EditorView {
         self.lsp.pending_prepare_rename = None;
         self.lsp.pending_rename = None;
         let pos = self.active_cursor_position();
-        let Some(lsp) = self.lsp.session.as_mut() else {
+        let Some((client, uri)) = self.lsp_client_and_uri() else {
             return;
         };
-        if let Ok(id) = lsp.request_completion(
-            self.state_manager.editor().line_index(),
-            pos.line,
-            pos.column,
-        ) {
+        if let Ok(id) = client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .request_completion(
+                &uri,
+                self.state_manager.editor().line_index(),
+                pos.line,
+                pos.column,
+            )
+        {
             self.lsp.completion_pending_request = Some(id);
             self.lsp.completion_requested_position = Some(pos);
         }
@@ -852,15 +1039,19 @@ impl EditorView {
         }
 
         let pos = self.active_cursor_position();
-        let Some(lsp) = self.lsp.session.as_mut() else {
+        let Some((client, uri)) = self.lsp_client_and_uri() else {
             self.clear_signature_help_popup();
             return;
         };
-        match lsp.request_signature_help(
-            self.state_manager.editor().line_index(),
-            pos.line,
-            pos.column,
-        ) {
+        match client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .request_signature_help(
+                &uri,
+                self.state_manager.editor().line_index(),
+                pos.line,
+                pos.column,
+            ) {
             Ok(id) => {
                 self.lsp.pending_signature_help = Some(id);
                 self.lsp.signature_help_requested_position = Some(pos);
@@ -883,17 +1074,22 @@ impl EditorView {
         self.lsp.pending_prepare_rename = None;
         self.lsp.pending_rename = None;
 
-        let Some(lsp) = self.lsp.session.as_mut() else {
+        let Some((client, uri)) = self.lsp_client_and_uri() else {
             return;
         };
 
         let context = json!({ "diagnostics": [] });
-        if let Ok(id) = lsp.request_code_action(
-            self.state_manager.editor().line_index(),
-            start,
-            end,
-            context,
-        ) {
+        if let Ok(id) = client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .request_code_action(
+                &uri,
+                self.state_manager.editor().line_index(),
+                start,
+                end,
+                context,
+            )
+        {
             self.lsp.pending_code_action = Some(id);
         }
     }
@@ -901,7 +1097,7 @@ impl EditorView {
     pub fn request_format_document_now(&mut self, report_unavailable: bool) -> bool {
         self.hide_popups();
         let options = self.formatting_options();
-        let Some(lsp) = self.lsp.session.as_mut() else {
+        let Some((client, uri)) = self.lsp_client_and_uri() else {
             if report_unavailable {
                 self.events.push(EditorEvent::LspMessage {
                     message: "Format-on-save requires an active LSP session".to_string(),
@@ -914,7 +1110,11 @@ impl EditorView {
             return false;
         };
 
-        match lsp.request_formatting(options) {
+        match client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .request_formatting(&uri, options)
+        {
             Ok(id) => {
                 let timeout = self.config.formatting_timeout.get();
                 self.lsp.pending_formatting = Some(PendingFormatting {
@@ -951,7 +1151,7 @@ impl EditorView {
         self.lsp.rename_target = None;
 
         let position = self.active_cursor_position();
-        let Some(lsp) = self.lsp.session.as_mut() else {
+        let Some((client, uri)) = self.lsp_client_and_uri() else {
             self.events.push(EditorEvent::LspMessage {
                 message: "Rename requires an active LSP session".to_string(),
             });
@@ -959,7 +1159,11 @@ impl EditorView {
         };
 
         let line_index = self.state_manager.editor().line_index();
-        match lsp.request_prepare_rename(line_index, position.line, position.column) {
+        match client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .request_prepare_rename(&uri, line_index, position.line, position.column)
+        {
             Ok(id) => {
                 self.lsp.pending_prepare_rename = Some((id, RenameTarget { position }));
             }
@@ -992,7 +1196,7 @@ impl EditorView {
             });
             return;
         };
-        let Some(lsp) = self.lsp.session.as_mut() else {
+        let Some((client, uri)) = self.lsp_client_and_uri() else {
             self.rename_popup.set(None);
             self.lsp.rename_target = None;
             self.events.push(EditorEvent::LspMessage {
@@ -1002,12 +1206,16 @@ impl EditorView {
         };
 
         let line_index = self.state_manager.editor().line_index();
-        match lsp.request_rename(
-            line_index,
-            target.position.line,
-            target.position.column,
-            new_name,
-        ) {
+        match client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .request_rename(
+                &uri,
+                line_index,
+                target.position.line,
+                target.position.column,
+                new_name,
+            ) {
             Ok(id) => {
                 self.rename_popup.set(None);
                 self.lsp.pending_rename = Some(id);
@@ -1088,10 +1296,14 @@ impl EditorView {
     pub fn request_document_symbols(&mut self) -> bool {
         self.hide_popups();
         self.lsp.pending_document_symbols = None;
-        let Some(lsp) = self.lsp.session.as_mut() else {
+        let Some((client, uri)) = self.lsp_client_and_uri() else {
             return false;
         };
-        match lsp.request_document_symbols() {
+        match client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .request_document_symbols(&uri)
+        {
             Ok(id) => {
                 self.lsp.pending_document_symbols = Some(id);
                 true
@@ -1107,10 +1319,14 @@ impl EditorView {
         }
         self.hide_popups();
         self.lsp.pending_workspace_symbols = None;
-        let Some(lsp) = self.lsp.session.as_mut() else {
+        let Some(client) = self.lsp.client.clone() else {
             return false;
         };
-        match lsp.request_workspace_symbol(query.clone()) {
+        match client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .request_workspace_symbol(query.clone())
+        {
             Ok(id) => {
                 self.lsp.pending_workspace_symbols = Some((id, query));
                 true
@@ -1143,12 +1359,16 @@ impl EditorView {
             return;
         }
 
-        let Some(lsp) = self.lsp.session.as_mut() else {
+        let Some((client, uri)) = self.lsp_client_and_uri() else {
             return;
         };
         let line_index = self.state_manager.editor().line_index();
         let requested_at = Instant::now();
-        match lsp.request_inlay_hints(line_index, key.range.start, key.range.end) {
+        match client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .request_inlay_hints(&uri, line_index, key.range.start, key.range.end)
+        {
             Ok(id) => {
                 self.lsp.pending_inlay_hints = Some(id);
                 self.lsp.pending_inlay_key = Some(key);
@@ -1249,6 +1469,19 @@ impl EditorView {
         editor_core_lsp::lsp_formatting_options(tab_width, insert_spaces)
     }
 
+    fn full_document_lsp_change(&self, new_text: String) -> Option<LspContentChange> {
+        self.current_lsp_uri()?;
+        let line_index = self.state_manager.editor().line_index();
+        let old_char_count = self.state_manager.editor().char_count();
+        Some(LspContentChange {
+            range: editor_core_lsp::LspRange::new(
+                lsp_position_for_char_offset(line_index, 0),
+                lsp_position_for_char_offset(line_index, old_char_count),
+            ),
+            text: new_text,
+        })
+    }
+
     fn finish_pending_formatting_failure(&mut self, message: String) {
         if self.lsp.pending_formatting.take().is_none() {
             return;
@@ -1299,10 +1532,7 @@ impl EditorView {
         // sub-edit's `TextDelta` survives in `last_text_delta` — the delta helper can't represent
         // the whole batch. A full-document replacement is exact here and keeps the LSP mirror in
         // sync (`did_change_many` advances it by the same replacement).
-        let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
-            let old_char_count = self.state_manager.editor().char_count();
-            lsp.full_document_change(self.state_manager.editor().line_index(), old_char_count, "")
-        });
+        let full_lsp_change = self.full_document_lsp_change(String::new());
 
         let before_text = self.state_manager.editor().get_text();
         let apply_result = self
@@ -1354,26 +1584,31 @@ impl EditorView {
 
     pub(super) fn request_goto(&mut self, kind: EditorLspGotoKind) {
         let pos = self.active_cursor_position();
-        let Some(lsp) = self.lsp.session.as_mut() else {
+        let Some((client, uri)) = self.lsp_client_and_uri() else {
             return;
         };
         let line_index = &self.state_manager.editor().line_index();
         let request = match kind {
-            EditorLspGotoKind::Definition => {
-                lsp.request_definition(line_index, pos.line, pos.column)
-            }
-            EditorLspGotoKind::Declaration => {
-                lsp.request_declaration(line_index, pos.line, pos.column)
-            }
-            EditorLspGotoKind::TypeDefinition => {
-                lsp.request_type_definition(line_index, pos.line, pos.column)
-            }
-            EditorLspGotoKind::Implementation => {
-                lsp.request_implementation(line_index, pos.line, pos.column)
-            }
-            EditorLspGotoKind::References => {
-                lsp.request_references(line_index, pos.line, pos.column, true)
-            }
+            EditorLspGotoKind::Definition => client
+                .lock()
+                .expect("LSP client mutex poisoned")
+                .request_definition(&uri, line_index, pos.line, pos.column),
+            EditorLspGotoKind::Declaration => client
+                .lock()
+                .expect("LSP client mutex poisoned")
+                .request_declaration(&uri, line_index, pos.line, pos.column),
+            EditorLspGotoKind::TypeDefinition => client
+                .lock()
+                .expect("LSP client mutex poisoned")
+                .request_type_definition(&uri, line_index, pos.line, pos.column),
+            EditorLspGotoKind::Implementation => client
+                .lock()
+                .expect("LSP client mutex poisoned")
+                .request_implementation(&uri, line_index, pos.line, pos.column),
+            EditorLspGotoKind::References => client
+                .lock()
+                .expect("LSP client mutex poisoned")
+                .request_references(&uri, line_index, pos.line, pos.column, true),
         };
         if let Ok(id) = request {
             self.lsp.pending_goto = Some((id, kind));
@@ -1419,7 +1654,7 @@ impl EditorView {
             self.lsp.hover_target = None;
             return;
         }
-        if self.lsp.session.is_none() {
+        if self.lsp.client.is_none() {
             self.lsp.hover_due = None;
             self.lsp.hover_target = None;
             return;
@@ -1544,12 +1779,7 @@ impl EditorView {
     }
 
     fn apply_code_action_workspace_edit(&mut self, edit: &serde_json::Value) -> bool {
-        let Some(current_uri) = self
-            .lsp
-            .session
-            .as_ref()
-            .map(|lsp| lsp.document().uri.clone())
-        else {
+        let Some(current_uri) = self.current_lsp_uri() else {
             return false;
         };
 
@@ -1574,18 +1804,9 @@ impl EditorView {
         // `apply_workspace_edit` applies its text edits through multiple internal executes, so
         // `last_text_delta` only holds the final sub-edit. Send a full-document replacement, which
         // is exact and keeps the LSP mirror aligned.
-        let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
-            let old_char_count = self.state_manager.editor().char_count();
-            lsp.full_document_change(self.state_manager.editor().line_index(), old_char_count, "")
-        });
-
-        let result = {
-            let Some(lsp) = self.lsp.session.as_mut() else {
-                return false;
-            };
-            lsp.apply_workspace_edit(&mut self.state_manager, edit)
-        };
-        if result.is_err() {
+        let full_lsp_change = self.full_document_lsp_change(String::new());
+        let lsp_edits = editor_core_lsp::workspace_edit_text_edits_for_uri(edit, &current_uri);
+        if editor_core_lsp::apply_text_edits(&mut self.state_manager, &lsp_edits).is_err() {
             self.events.push(EditorEvent::CodeActionMessage {
                 message: "Skipped code action: failed to apply workspace edit".to_string(),
             });
@@ -1609,10 +1830,13 @@ impl EditorView {
     }
 
     fn request_code_action_command(&mut self, command: editor_core_lsp::LspCommand) {
-        let Some(lsp) = self.lsp.session.as_mut() else {
+        let Some(client) = self.lsp.client.clone() else {
             return;
         };
-        let _ = lsp.request_execute_command(command.command, command.arguments);
+        let _ = client
+            .lock()
+            .expect("LSP client mutex poisoned")
+            .request_execute_command(command.command, command.arguments);
     }
 
     fn apply_completion_index(&mut self, idx: usize) {
@@ -1635,14 +1859,7 @@ impl EditorView {
         if let Some(text_edit) = obj.get("textEdit") {
             // `apply_text_edits` runs one execute per edit, so `last_text_delta` can't capture the
             // batch; a full-document replacement is exact and keeps the LSP mirror in sync.
-            let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
-                let old_char_count = self.state_manager.editor().char_count();
-                lsp.full_document_change(
-                    self.state_manager.editor().line_index(),
-                    old_char_count,
-                    "",
-                )
-            });
+            let full_lsp_change = self.full_document_lsp_change(String::new());
 
             let edits = editor_core_lsp::text_edits_from_value(&serde_json::Value::Array(vec![
                 text_edit.clone(),
@@ -2062,6 +2279,15 @@ fn lsp_position_from_value(value: &serde_json::Value) -> Option<editor_core_lsp:
             .as_u64()
             .map(|character| u32::try_from(character).unwrap_or(u32::MAX))?,
     ))
+}
+
+fn lsp_position_for_char_offset(
+    line_index: &LineIndex,
+    offset: usize,
+) -> editor_core_lsp::LspPosition {
+    let (line, column) = line_index.char_offset_to_position(offset);
+    let line_text = line_index.get_line_text(line).unwrap_or_default();
+    editor_core_lsp::LspCoordinateConverter::position_to_lsp(&line_text, line, column)
 }
 
 fn word_at_char_column(line: &str, column: usize) -> Option<String> {

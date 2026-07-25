@@ -11,13 +11,13 @@ use crossterm::event::{
 };
 use editor_core::{
     Command, ComposedCellSource, ComposedLineKind, CursorCommand, DiagnosticSeverity,
-    DocumentOutline, EditCommand, EditorStateManager, Position, SearchOptions, Selection,
-    SelectionDirection, StyleCommand, TabKeyBehavior, TextEditSpec, ViewCommand, WorkspaceSymbol,
-    char_width,
+    DocumentOutline, EditCommand, EditorStateManager, LineIndex, Position, SearchOptions,
+    Selection, SelectionDirection, StyleCommand, TabKeyBehavior, TextEditSpec, ViewCommand,
+    WorkspaceSymbol, char_width,
 };
 use editor_core_lsp::{
-    LspCodeActionItem, LspContentChange, LspDiagnostic, LspDiagnosticSeverity, LspSession,
-    locations_from_value,
+    LspCodeActionItem, LspContentChange, LspDiagnostic, LspDiagnosticSeverity,
+    SemanticTokensLegend, locations_from_value,
 };
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -28,6 +28,7 @@ use serde_json::json;
 
 use super::config::{EditorConfig, EditorLspGotoKind, EditorLspMode};
 use super::keymap::{EditorAction, EditorKeymap, KeyChord};
+use super::lsp_client::SharedEditorLspClient;
 use super::popup::{
     CodeActionItemView, CodeActionPopupModel, CompletionPopupModel, HoverPopupModel,
     LspCompletionItemEdit, RenamePopupModel, SignatureHelpPopupModel,
@@ -167,7 +168,7 @@ struct InlayHintRequestKey {
 
 #[derive(Default)]
 struct EditorLspController {
-    session: Option<LspSession>,
+    client: Option<SharedEditorLspClient>,
 
     // Hover scheduling/state.
     hover_due: Option<Instant>,
@@ -215,6 +216,14 @@ struct EditorLspController {
     pending_document_diagnostic: Option<u64>,
     diagnostic_cursor: Option<usize>,
     diagnostics_revision: u64,
+
+    // Manual derived-state refresh used when LSP is provided by a shared workspace session.
+    pending_semantic_tokens: Option<(u64, InlayTextRevision)>,
+    pending_folding_ranges: Option<(u64, InlayTextRevision)>,
+    semantic_result_id: Option<String>,
+    semantic_data: Vec<u32>,
+    semantic_legend: Option<SemanticTokensLegend>,
+    last_derived_request_at: Option<Instant>,
 }
 
 pub struct EditorView {

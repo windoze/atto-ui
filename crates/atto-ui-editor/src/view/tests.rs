@@ -548,6 +548,7 @@ fn editor_lsp_document_symbols_response_emits_utf16_converted_outline() {
     view.handle_lsp_response(editor_core_lsp::LspResponse {
         id: 42,
         method: "textDocument/documentSymbol".to_string(),
+        uri: None,
         result: Some(serde_json::json!([
             {
                 "name": "target",
@@ -608,6 +609,7 @@ fn stale_completion_response_does_not_clear_signature_help_popup() {
     view.handle_lsp_response(editor_core_lsp::LspResponse {
         id: 42,
         method: "textDocument/completion".to_string(),
+        uri: None,
         result: Some(serde_json::json!([{ "label": "stale_completion" }])),
         error: None,
     });

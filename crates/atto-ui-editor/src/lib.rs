@@ -15,6 +15,7 @@ mod config;
 mod diff;
 mod dynamic;
 mod keymap;
+mod lsp_client;
 mod popup;
 mod syntax;
 mod theme;
@@ -29,6 +30,7 @@ pub use config::{
 pub use diff::{DiffView, DiffViewConfig, DiffViewHandle, DiffViewMode};
 pub use dynamic::{editor_schema, register_editor, register_runtime_components};
 pub use keymap::{EditorAction, EditorKeymap, KeyChord};
+pub use lsp_client::{EditorLspClient, LocalLspClient, SharedEditorLspClient, shared_lsp_client};
 pub use popup::{
     CodeActionItemView, CodeActionPopupModel, CompletionItem, CompletionPopupModel,
     EditorPopupWindows, HoverPopupModel, LspCompletionItemEdit, LspHoverContents, RenamePopupModel,

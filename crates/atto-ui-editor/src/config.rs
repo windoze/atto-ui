@@ -221,7 +221,11 @@ impl EditorLspConfig {
 pub enum EditorLspMode {
     #[default]
     Disabled,
+    /// Start and own a standalone LSP session from this view.
     Enabled(EditorLspConfig),
+    /// Use an externally injected LSP client. The config still carries document URI and feature
+    /// toggles, but `EditorView` will not start its own server process.
+    External(EditorLspConfig),
 }
 
 #[derive(Clone, Debug)]

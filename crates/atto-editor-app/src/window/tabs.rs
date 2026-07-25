@@ -7,6 +7,7 @@ use atto_ui::reactive::{Binding, DirtyObserver, EventQueue};
 use editor_core::{BufferId, TextEditSpec};
 
 use crate::language::{guess_language_id, lsp_mode_for_file, syntax_config_for_file};
+use crate::workspace_lsp_client::WorkspaceEditorLspClient;
 use crate::workspace_state::TabRef;
 
 use super::document_tab::{DocumentTabView, SaveSettingsBindings, TabCommand};
@@ -103,6 +104,30 @@ impl EditorWindowView {
             .as_ref()
             .map(|opened| opened.text.clone())
             .unwrap_or(disk_text);
+        let (view_lsp, lsp_client) =
+            if let (atto_ui_editor::EditorLspMode::Enabled(cfg), Some(opened)) =
+                (lsp.clone(), workspace_open.as_ref())
+            {
+                let has_workspace_session = self
+                    .workspace_state
+                    .lock()
+                    .lsp
+                    .session_for_buffer(opened.buffer_id)
+                    .is_ok();
+                if has_workspace_session {
+                    let uri = editor_core_lsp::path_to_file_uri(&path);
+                    let client = atto_ui_editor::shared_lsp_client(WorkspaceEditorLspClient::new(
+                        self.workspace_state.clone(),
+                        opened.buffer_id,
+                        uri,
+                    ));
+                    (atto_ui_editor::EditorLspMode::External(cfg), Some(client))
+                } else {
+                    (atto_ui_editor::EditorLspMode::Enabled(cfg), None)
+                }
+            } else {
+                (lsp.clone(), None)
+            };
 
         let text: Binding<String> = initial_text.clone().into();
         let format_on_save: Binding<bool> = false.into();
@@ -120,7 +145,8 @@ impl EditorWindowView {
             },
             language_id.clone(),
             syntax,
-            lsp,
+            view_lsp,
+            lsp_client,
         );
 
         let idx = self
