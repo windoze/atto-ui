@@ -142,15 +142,6 @@ name = "snapshot_wide_overlap_app"
 path = "src/bin/snapshot_wide_overlap_app.rs"
 test = false
 
-[patch.crates-io]
-editor-core = { path = "../editor-core/crates/editor-core" }
-editor-core-lsp = { path = "../editor-core/crates/editor-core-lsp" }
-editor-core-highlight-simple = { path = "../editor-core/crates/editor-core-highlight-simple" }
-editor-core-sublime = { path = "../editor-core/crates/editor-core-sublime" }
-editor-core-treesitter = { path = "../editor-core/crates/editor-core-treesitter" }
-editor-core-diff = { path = "../editor-core/crates/editor-core-diff" }
-editor-core-diff-view = { path = "../editor-core/crates/editor-core-diff-view" }
-
 [workspace]
 members = [
     "crates/atto-ui-test-host",

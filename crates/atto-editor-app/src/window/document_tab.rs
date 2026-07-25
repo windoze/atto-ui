@@ -795,6 +795,7 @@ impl ::atto_ui::composable::EventHandling for DocumentTabView {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_editor_view(
     text: Binding<String>,
     save_settings: SaveSettingsBindings,

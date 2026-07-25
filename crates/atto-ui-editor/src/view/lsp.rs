@@ -501,11 +501,10 @@ impl EditorView {
                 .lsp
                 .pending_folding_ranges
                 .is_some_and(|(_, pending_revision)| pending_revision == revision)
+            && let Ok(id) = lsp.request_folding_ranges(&uri)
         {
-            if let Ok(id) = lsp.request_folding_ranges(&uri) {
-                self.lsp.pending_folding_ranges = Some((id, revision));
-                requested = true;
-            }
+            self.lsp.pending_folding_ranges = Some((id, revision));
+            requested = true;
         }
 
         if requested {
