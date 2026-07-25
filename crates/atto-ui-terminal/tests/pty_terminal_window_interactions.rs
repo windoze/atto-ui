@@ -736,19 +736,48 @@ fn pty_terminal_prefix_escape_sends_literal_prefix_to_subprocess() {
 #[test]
 fn pty_terminal_tmux_probe_environment_is_configurable() {
     let _guard = pty_window_test_guard();
-    let script = concat!(
-        "printf 'TMUX=<%s> TMUX_PANE=<%s> TERM=<%s>\\r\\n' ",
-        "\"${TMUX-}\" \"${TMUX_PANE-}\" \"${TERM-}\"; ",
-        "sleep 10"
-    );
+    // 断言的是"config 文件 -> 加载 -> spawn -> 子进程真实继承环境"这条端到端
+    // 链路。让子进程把继承到的 TMUX/TMUX_PANE/TERM 直接写到文件,测试用
+    // wait_for_file 读文件断言。文件落地是确定性的(子进程拿到环境即写),
+    // 完全不进"app 渲染 -> 终端转义 -> vt100 解析 -> 屏幕轮询"这条在 CI 慢
+    // 机器上不确定的链路,根除本测试的 flaky。
+    // 环境变量构造的纯逻辑另由 prepare_spawn_command 的进程内单元测试覆盖。
+    let write_env_script = |out_path: &str| {
+        format!(
+            "printf 'TMUX=<%s>\\nTMUX_PANE=<%s>\\nTERM=<%s>\\n' \
+             \"${{TMUX-}}\" \"${{TMUX_PANE-}}\" \"${{TERM-}}\" > '{out_path}'; \
+             sleep 10"
+        )
+    };
 
     let (default_root, default_config_arg) = isolated_default_config("tmux-probe-default");
+    let default_out = default_root.join("env.txt");
+    let default_out_arg = default_out.to_string_lossy().into_owned();
     let mut host = spawn_snapshot_without_host_tmux(
-        &["--config", &default_config_arg, "/bin/sh", "-c", script],
+        &[
+            "--config",
+            &default_config_arg,
+            "/bin/sh",
+            "-c",
+            &write_env_script(&default_out_arg),
+        ],
         90,
         26,
     );
-    wait_for_text(&host, "TMUX=<> TMUX_PANE=<> TERM=<xterm-256color>");
+    wait_for_file_with_screen(&default_out, Some(&host));
+    let default_env = fs::read_to_string(&default_out).expect("read default env file");
+    assert!(
+        default_env.contains("TMUX=<>"),
+        "default should not inject TMUX:\n{default_env}"
+    );
+    assert!(
+        default_env.contains("TMUX_PANE=<>"),
+        "default should not inject TMUX_PANE:\n{default_env}"
+    );
+    assert!(
+        default_env.contains("TERM=<xterm-256color>"),
+        "default should keep host TERM:\n{default_env}"
+    );
     host.send_ctrl('q').expect("quit default probe");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean default probe exit");
@@ -767,13 +796,33 @@ fn pty_terminal_tmux_probe_environment_is_configurable() {
         ..TerminalConfig::default()
     };
     let (enabled_root, enabled_config_arg) = isolated_config("tmux-probe-enabled", &enabled_config);
+    let enabled_out = enabled_root.join("env.txt");
+    let enabled_out_arg = enabled_out.to_string_lossy().into_owned();
     let mut host = spawn_snapshot_without_host_tmux(
-        &["--config", &enabled_config_arg, "/bin/sh", "-c", script],
+        &[
+            "--config",
+            &enabled_config_arg,
+            "/bin/sh",
+            "-c",
+            &write_env_script(&enabled_out_arg),
+        ],
         90,
         26,
     );
-    wait_for_text(&host, "TMUX=</tmp/atto-ui-m3-1.sock,4242,7> TMUX_PANE=<");
-    wait_for_text(&host, "%3> TERM=<tmux-256color>");
+    wait_for_file_with_screen(&enabled_out, Some(&host));
+    let enabled_env = fs::read_to_string(&enabled_out).expect("read enabled env file");
+    assert!(
+        enabled_env.contains("TMUX=</tmp/atto-ui-m3-1.sock,4242,7>"),
+        "enabled should inject TMUX:\n{enabled_env}"
+    );
+    assert!(
+        enabled_env.contains("TMUX_PANE=<%3>"),
+        "enabled should inject TMUX_PANE:\n{enabled_env}"
+    );
+    assert!(
+        enabled_env.contains("TERM=<tmux-256color>"),
+        "enabled+override_term should set tmux TERM:\n{enabled_env}"
+    );
     host.send_ctrl('q').expect("quit enabled probe");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean enabled probe exit");
