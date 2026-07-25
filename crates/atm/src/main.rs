@@ -1,3 +1,12 @@
+#![forbid(unsafe_code)]
+
+//! `atm` — the atto terminal multiplexer.
+//!
+//! A full multi-window terminal app built on the reusable `atto-ui-terminal`
+//! components: local PTY sessions in atto-ui windows, split panes, copy-mode,
+//! command blocks, prefix-key handling, a settings window, and IPC hooks for
+//! the companion `tmux` shim.
+
 use std::cell::RefCell;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -29,8 +38,8 @@ use atto_ui_terminal::{
     default_terminal_config_path, load_terminal_config_or_default,
 };
 
-const WINDOWS_MENU_ID: &str = "atto-ui-terminal:terminal_viewer:windows";
-const WINDOWS_MENU_LIST_ID: &str = "atto-ui-terminal:terminal_viewer:windows:list";
+const WINDOWS_MENU_ID: &str = "atm:windows";
+const WINDOWS_MENU_LIST_ID: &str = "atm:windows:list";
 
 #[derive(Clone, Copy, Debug)]
 enum TerminalViewerAction {

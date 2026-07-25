@@ -1,20 +1,21 @@
 # atto-ui-terminal
 
-`atto-ui-terminal` provides the terminal emulator component used by Atto UI apps plus a full `terminal_viewer` demo. It runs local PTY sessions inside `atto-ui` windows, renders vt100 output with Ratatui, forwards keyboard and mouse input, and exposes handles for lifecycle, selection, command blocks, configuration, and split-pane orchestration.
+`atto-ui-terminal` provides the reusable terminal emulator component used by Atto UI apps. It runs local PTY sessions, renders vt100 output with Ratatui, forwards keyboard and mouse input, and exposes handles for lifecycle, selection, command blocks, configuration, and split-pane orchestration.
+
+The component powers [`atm`](../atm), the atto terminal multiplexer app — see that crate for the end-user binary, the `tmux` shim, and the shortcut reference. This crate is the library plus deterministic PTY test fixtures; it no longer ships the viewer app or the `tmux` shim.
 
 ## Quick Start
 
-Run the terminal viewer with the default shell:
+```rust
+use atto_ui_terminal::{TerminalConfig, TerminalEmulator, TerminalSessionSpec};
 
-```sh
-cargo run -p atto-ui-terminal --example terminal_viewer
+let config = TerminalConfig::default();
+let mut terminal = TerminalEmulator::from_config(&config)?;
+terminal.spawn_session(&TerminalSessionSpec::shell_from_env())?;
+let handle = terminal.handle();
 ```
 
-Pass a command to make the first terminal window run that command instead of the shell:
-
-```sh
-cargo run -p atto-ui-terminal --example terminal_viewer -- top
-```
+Use `TerminalEmulator::from_config(&config)?` for a single terminal widget, or wrap it in `TerminalPaneGroup` for split panes. `TerminalHandle` exposes running state, process exit status, title/bell/clipboard callbacks, scrollback, selection/copy helpers, command-block queries, live config application, and PTY resize.
 
 The deterministic PTY fixtures used by tests are:
 
@@ -23,49 +24,22 @@ cargo run -p atto-ui-terminal --bin snapshot_terminal_app
 cargo run -p atto-ui-terminal --bin snapshot_terminal_window_app
 ```
 
-## Terminal Viewer Features
-
-The viewer is a complete multi-window terminal app built on the reusable `TerminalEmulator` and `TerminalPaneGroup` components:
+## Component Capabilities
 
 | Area | Capabilities |
 |---|---|
-| Process lifecycle | Exit status tracking, `on_exit`, dead-session prompt, and `R` restart using the window's session profile/cwd. |
-| Window shell | Floating terminal windows, title sync from OSC 0/2, Windows menu refresh, minimize/maximize/close, and File menu entries for shell/command windows. |
-| Prefix commands | Configurable tmux-style plain `Ctrl+<letter>` prefix, default `Ctrl+B`, with shell actions and literal-prefix escape. |
-| Split panes | `Ctrl+B %` splits right, `Ctrl+B "` splits below, `Ctrl+B o` / `Ctrl+B Tab` focuses the next pane, arrow keys select geometrically, `Ctrl+Arrow` resizes, `z` zooms, and `x` closes the active pane. |
-| Selection/copy | Mouse selection, `Shift+drag` local selection when child mouse reporting is enabled, copy-mode via `Ctrl+B [`, internal copy buffer, OSC 52, tmux DCS passthrough for OSC 52, and system clipboard backend. |
+| Process lifecycle | Exit status tracking, `on_exit`, and session specs carrying profile/cwd for restart. |
+| Prefix commands | Configurable tmux-style plain `Ctrl+<letter>` prefix with shell actions and literal-prefix escape. |
+| Split panes | `TerminalPaneGroup` maintains a pane tree, layout, active pane, and pane handle snapshots inside a single `Window` view. |
+| Selection/copy | Mouse selection, `Shift+drag` local selection when child mouse reporting is enabled, copy-mode, internal copy buffer, OSC 52, tmux DCS passthrough for OSC 52, and a system clipboard backend. |
 | Scroll routing | Mouse-reporting apps receive SGR wheel events, alt-screen apps without mouse reporting receive configured scroll keys, and normal shell output uses local scrollback. |
-| Command blocks | OSC 133/7 command marks drive command-block presentation, `Ctrl+Up` / `Ctrl+Down` navigation, right-click Rerun / Copy command / Copy output, command exit codes, and cwd inheritance. |
+| Command blocks | OSC 133/7 command marks drive command-block presentation, navigation, and exit codes. |
 | Rendering fidelity | Wide-character-aware cells, selectable block/underline/bar cursor shapes, application cursor mode, and application keypad encoding. |
-| IPC / tmux shim | `TerminalPaneIpc` maps pane protocol methods to terminal handles, and the `tmux` shim binary translates common tmux subcommands into those IPC calls. |
-| Settings | Visual File -> Settings window for scrollback, palette, prefix/release shortcuts, alt-screen scrolling, profiles/cwd, shell integration, and default cursor shape. |
-
-## Shortcuts
-
-| Shortcut | Action |
-|---|---|
-| `Ctrl+B F10` | Open the menu while the terminal is capturing input. |
-| `Ctrl+B w` | Enter window-management mode. |
-| `Ctrl+B [` | Enter copy-mode. |
-| `Ctrl+B ]` | Paste the component copy buffer into the child process. |
-| `Ctrl+B Ctrl+B` | Send one literal prefix key to the child process. |
-| `Ctrl+B %` | Split the active terminal pane to the right. |
-| `Ctrl+B "` | Split the active terminal pane below. |
-| `Ctrl+B o` / `Ctrl+B Tab` | Focus the next pane. |
-| `Ctrl+B Left/Right/Up/Down` | Select the nearest pane in that direction. |
-| `Ctrl+B Ctrl+Left/Right/Up/Down` | Resize the nearest split around the active pane. |
-| `Ctrl+B z` | Zoom or restore the active pane. |
-| `Ctrl+B x` | Close the active pane when another pane remains. |
-| `Ctrl+Up` / `Ctrl+Down` | Jump to the previous or next OSC 133 command block when command marks are available. |
-| `R` | Restart a focused dead terminal session after the exit prompt appears. |
-
-Copy-mode keys are `h`/`j`/`k`/`l` or arrows to move, `PageUp`/`PageDown` and `Home`/`End` for larger jumps, `v` or `Space` to start selection, `y` or `Enter` to copy, and `Esc` or `q` to cancel.
-
-When no config file exists, `terminal_viewer` uses `Ctrl+Shift+L` as its capture-release shortcut so plain `F10` can reach the menu after release. The reusable `TerminalConfig` default remains `Ctrl+Shift+Esc`; saved viewer configs can override either shortcut.
+| IPC | `TerminalPaneIpc` maps pane protocol methods to terminal handles for exposure over the core IPC server. |
 
 ## Configuration
 
-`TerminalConfig` is serializable as JSON or YAML and can be edited visually from File -> Settings. The viewer loads the first configured path in this order:
+`TerminalConfig` is serializable as JSON or YAML and can be edited visually from a host app's settings UI. The host loads it from the first configured path in this order:
 
 1. `ATTO_UI_TERMINAL_CONFIG`
 2. `$XDG_CONFIG_HOME/atto-ui/terminal.yaml`
@@ -124,34 +98,15 @@ palette:
 
 Supported color specs are Ratatui color names, `#rgb`, `#rrggbb`, and `indexed:<n>`. Prefix keys must be plain `Ctrl+<ASCII letter>` so they work reliably in traditional terminal byte streams.
 
-`tmux.inject` is opt-in. When enabled, spawned child processes receive `$TMUX` formatted as `socket_path,pid,session_id`, `$TMUX_PANE` formatted as `%pane_id`, and `shim_path` is prepended to `PATH` so a built `tmux` shim can intercept supported subcommands. `override_term=true` changes `TERM` to `tmux-256color`; otherwise the terminal keeps the default `xterm-256color`.
+`tmux.inject` is opt-in. When enabled, spawned child processes receive `$TMUX` formatted as `socket_path,pid,session_id`, `$TMUX_PANE` formatted as `%pane_id`, and `shim_path` is prepended to `PATH` so a built `tmux` shim (shipped by [`atm`](../atm)) can intercept supported subcommands. `override_term=true` changes `TERM` to `tmux-256color`; otherwise the terminal keeps the default `xterm-256color`.
 
-Build the shim with:
-
-```sh
-cargo build -p atto-ui-terminal --bin tmux
-```
-
-The shim is a client translator, not a tmux server. It supports `send-keys`, `capture-pane`, `list-panes`, `split-window`, `select-pane`, `break-pane`, and `display-popup`; unsupported subcommands and control mode (`-CC`) fail explicitly.
-
-## Component Usage
-
-Use `TerminalEmulator::from_config(&config)?` for a single terminal widget, or wrap it in `TerminalPaneGroup` for split panes. `TerminalHandle` exposes running state, process exit status, title/bell/clipboard callbacks, scrollback, selection/copy helpers, command-block queries, live config application, and PTY resize.
-
-```rust
-use atto_ui_terminal::{TerminalConfig, TerminalEmulator, TerminalSessionSpec};
-
-let config = TerminalConfig::default();
-let mut terminal = TerminalEmulator::from_config(&config)?;
-terminal.spawn_session(&TerminalSessionSpec::shell_from_env())?;
-let handle = terminal.handle();
-```
+## IPC Integration
 
 To expose pane operations over the core IPC server, register `terminal_pane_ipc_handler(TerminalPaneIpc::new(group_handle))` on the `IpcServer` that is drained by your app. The handler maps pane protocol methods to `send_input_bytes`, `snapshot`, `panes`, split/select, `break_pane`, and floating popup window creation. Without that handler, generic IPC methods such as `query`, `invoke`, and `tree` still work, but terminal pane methods return `ActionNotSupported`.
 
 ## Validation
 
-Focused terminal validation:
+Focused component validation:
 
 ```sh
 cargo test -p atto-ui-terminal --lib

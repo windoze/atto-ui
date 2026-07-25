@@ -11,6 +11,8 @@
   - `src/composable/` — `Component` trait + layouts/scrolling for window content
 - `src/bin/snapshot_app.rs` — deterministic test target used by PTY tests
 - `crates/atto-ui-test-host/` — PTY runner + `vt100` screen parser for integration tests
+- `crates/atto-ui-terminal/` — reusable terminal emulator component (PTY sessions, split panes, copy-mode, command blocks, settings, IPC helpers)
+- `crates/atm/` — `atm` (atto terminal multiplexer) app + `tmux` shim binary, built on `atto-ui-terminal`
 - `tests/` — end-to-end/PTY integration tests
 - `examples/demo.rs` — interactive demo showcasing multi-window behavior
 

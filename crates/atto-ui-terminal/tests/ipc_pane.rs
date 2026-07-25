@@ -1,8 +1,6 @@
 use std::env;
-use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
@@ -16,8 +14,7 @@ use atto_ui::protocol::{
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind};
 use atto_ui_terminal::{
-    TerminalEmulator, TerminalPaneGroup, TerminalPaneIpc, TerminalTmuxEnvironmentConfig,
-    terminal_pane_ipc_handler,
+    TerminalEmulator, TerminalPaneGroup, TerminalPaneIpc, terminal_pane_ipc_handler,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -108,43 +105,6 @@ fn wait_for_snapshot_text(
     panic!(
         "terminal output did not contain {needle:?}; snapshot:\n{}",
         handle.snapshot().text()
-    );
-}
-
-fn tmux_shim_dir() -> String {
-    Path::new(env!("CARGO_BIN_EXE_tmux"))
-        .parent()
-        .expect("tmux shim bin directory")
-        .to_string_lossy()
-        .into_owned()
-}
-
-fn sh_quote(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
-}
-
-fn run_tmux_shim(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_tmux"))
-        .args(args)
-        .env_remove("TMUX")
-        .env_remove("TMUX_PANE")
-        .env_remove("ATTO_UI_SOCKET")
-        .output()
-        .expect("run tmux shim")
-}
-
-#[test]
-fn tmux_shim_reports_unsupported_subcommands() {
-    let output = run_tmux_shim(&["new-session"]);
-
-    assert!(
-        !output.status.success(),
-        "unsupported tmux command should fail"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("unsupported tmux subcommand new-session"),
-        "stderr:\n{stderr}"
     );
 }
 
@@ -249,88 +209,6 @@ fn terminal_pane_ipc_send_keys_reaches_target_subprocess_and_capture_reads_echo(
     }
 
     handle.send_input_bytes(b"quit\n");
-}
-
-#[test]
-fn tmux_shim_from_child_path_drives_native_pane_methods() {
-    let socket_path = temp_socket_path("tmux-shim-child");
-    let start_path = socket_path.with_extension("start");
-    let script = format!(
-        concat!(
-            "while [ ! -f {start} ]; do sleep 0.01; done; ",
-            "printf 'READY\\r\\n'; ",
-            "tmux capture-pane -p; ",
-            "tmux send-keys -t \"$TMUX_PANE\" \"printf FROM_SEND\" Enter; ",
-            "tmux split-window -h; ",
-            "printf 'SPLIT_DONE\\r\\n'; ",
-            "exec /bin/sh"
-        ),
-        start = sh_quote(&start_path)
-    );
-    // Pane ids are allocated when the group is created, so build the group
-    // first and inject the *actual* pane id as `$TMUX_PANE`; otherwise the
-    // shim's `capture-pane`/`send-keys` would target a non-existent pane.
-    let mut group = TerminalPaneGroup::new(TerminalEmulator::new());
-    let panes = group.handle();
-    let pane_id = panes.active_pane_id().expect("active pane").raw();
-    let handle = panes
-        .active_terminal_handle()
-        .expect("active terminal handle");
-    handle.set_tmux_environment(TerminalTmuxEnvironmentConfig {
-        inject: true,
-        socket_path: socket_path.to_string_lossy().into_owned(),
-        shim_path: Some(tmux_shim_dir()),
-        server_pid: Some(std::process::id()),
-        session_id: 1,
-        pane_id,
-        override_term: false,
-    });
-    group
-        .with_active_terminal_mut(|terminal| {
-            terminal.spawn_process("/bin/sh", &["-c".to_string(), script])
-        })
-        .expect("active pane present")
-        .expect("spawn tmux shim probe shell");
-    let mut desktop = desktop_with_group(group);
-    draw_desktop(&mut desktop);
-
-    let mut server = IpcServer::bind(&socket_path).expect("bind ipc");
-    server.set_method_handler(terminal_pane_ipc_handler(TerminalPaneIpc::new(
-        panes.clone(),
-    )));
-    fs::write(&start_path, b"go").expect("release tmux shim probe shell");
-    wait_for_snapshot_text(&handle, "READY", Duration::from_secs(5));
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut text = String::new();
-    while Instant::now() < deadline {
-        server.drain_pending(&mut desktop, screen());
-        draw_desktop(&mut desktop);
-        text = handle.snapshot().text();
-        if panes.pane_count() == 2
-            && text.contains("FROM_SEND")
-            && text.matches("READY").count() >= 2
-        {
-            break;
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-    let _ = fs::remove_file(&start_path);
-    handle.send_input_bytes(b"exit\n");
-
-    assert_eq!(
-        panes.pane_count(),
-        2,
-        "split-window should add a pane; snapshot:\n{text}"
-    );
-    assert!(
-        text.matches("READY").count() >= 2,
-        "capture-pane should print the captured READY line; snapshot:\n{text}"
-    );
-    assert!(
-        text.contains("FROM_SEND"),
-        "send-keys should queue input for the shell; snapshot:\n{text}"
-    );
 }
 
 #[test]

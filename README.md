@@ -16,7 +16,8 @@
 | `atto` CLI | External IPC client binary from the root crate for scripted `query`, `invoke`, and `tree` calls over `ATTO_UI_SOCKET`. |
 | `crates/atto-editor-app` | Multi-window terminal editor app with Explorer, tabs, split views, command palette, file/symbol/search pickers, and LSP-backed editor features. |
 | `crates/atto-agent-app` | Single-window TUI agent app built on `atto-ui-chat`, with DeepSeek protocol/client modules, local tools, skills, plan mode, context compaction, and deterministic mock PTY fixtures. |
-| `crates/atto-ui-terminal` | Full-featured terminal emulator component and `terminal_viewer` demo with multi-window sessions, split panes, copy-mode, command blocks, terminal pane IPC helpers, and a client-side `tmux` shim. |
+| `crates/atto-ui-terminal` | Reusable terminal emulator component: PTY sessions, split panes, copy-mode, command blocks, settings, and terminal pane IPC helpers. Powers the multiplexer below. |
+| `crates/atm` | `atm` (atto terminal multiplexer) — full multi-window terminal app built on `atto-ui-terminal`, plus a client-side `tmux` shim binary. |
 
 ## Requirements
 
@@ -65,28 +66,28 @@ cargo run --bin atto -- --socket /tmp/atto-ui.sock invoke my-checkbox toggle
 
 The CLI currently covers the generic control-plane methods `query`, `invoke`, and `tree`. Terminal pane methods such as `send_keys`, `capture_pane`, `split_window`, and `display_popup` are available to Rust apps that register `atto_ui_terminal::terminal_pane_ipc_handler(...)` on their `IpcServer`; they are also the backend used by the `tmux` shim described below.
 
-## Terminal App Quick Start
+## Terminal Multiplexer Quick Start
 
-Launch the full terminal viewer demo with your login shell, or pass a command to make the initial terminal window run that command:
-
-```sh
-cargo run -p atto-ui-terminal --example terminal_viewer
-cargo run -p atto-ui-terminal --example terminal_viewer -- top
-```
-
-The viewer supports floating terminal windows, tmux-style split panes, pane zoom/resize/close, dead-session restart, OSC title sync, command-block navigation for OSC 133/7 shell integration, local selection/copy-mode, OSC 52/system clipboard integration, tmux DCS passthrough for OSC 52, alt-screen wheel routing, and a File -> Settings window backed by JSON/YAML `TerminalConfig`.
-
-Key defaults: `Ctrl+B` is the terminal prefix, `Ctrl+B [` enters copy-mode, `Ctrl+B %` / `Ctrl+B "` split panes, `Ctrl+B o` / `Ctrl+B Tab` focuses the next pane, `Ctrl+B` + an arrow key selects a pane geometrically, `Ctrl+B Ctrl+Arrow` resizes the nearest split, `Ctrl+B z` toggles pane zoom, `Ctrl+B x` closes the active pane, and `Ctrl+B F10` opens the menu while capture is active. Without a saved config, `terminal_viewer` uses `Ctrl+Shift+L` to release capture so plain `F10` can reach the menu; saved configs can change the release shortcut.
-
-The terminal crate also builds a client-side `tmux` shim:
+Launch `atm` with your login shell, or pass a command to make the initial terminal window run that command:
 
 ```sh
-cargo build -p atto-ui-terminal --bin tmux
+cargo run -p atm
+cargo run -p atm -- top
 ```
 
-When a terminal app both enables the IPC socket and registers the terminal pane IPC handler, `TerminalConfig.tmux.inject=true` can make child processes see `$TMUX` / `$TMUX_PANE` and put the shim directory at the front of `PATH`. The shim supports common client commands such as `send-keys`, `capture-pane -p`, `list-panes`, `split-window`, `select-pane`, `break-pane`, and `display-popup`; it is not a tmux server implementation and does not support control mode (`-CC`).
+`atm` supports floating terminal windows, tmux-style split panes, pane zoom/resize/close, dead-session restart, OSC title sync, command-block navigation for OSC 133/7 shell integration, local selection/copy-mode, OSC 52/system clipboard integration, tmux DCS passthrough for OSC 52, alt-screen wheel routing, and a File -> Settings window backed by JSON/YAML `TerminalConfig`.
 
-Configuration is loaded from `ATTO_UI_TERMINAL_CONFIG` when set, then `$XDG_CONFIG_HOME/atto-ui/terminal.yaml`, then `~/.config/atto-ui/terminal.yaml`. See `crates/atto-ui-terminal/README.md` for feature details, config examples, and focused validation commands.
+Key defaults: `Ctrl+B` is the terminal prefix, `Ctrl+B [` enters copy-mode, `Ctrl+B %` / `Ctrl+B "` split panes, `Ctrl+B o` / `Ctrl+B Tab` focuses the next pane, `Ctrl+B` + an arrow key selects a pane geometrically, `Ctrl+B Ctrl+Arrow` resizes the nearest split, `Ctrl+B z` toggles pane zoom, `Ctrl+B x` closes the active pane, and `Ctrl+B F10` opens the menu while capture is active. Without a saved config, `atm` uses `Ctrl+Shift+L` to release capture so plain `F10` can reach the menu; saved configs can change the release shortcut.
+
+`atm` also builds a client-side `tmux` shim:
+
+```sh
+cargo build -p atm --bin tmux
+```
+
+When an app both enables the IPC socket and registers the terminal pane IPC handler, `TerminalConfig.tmux.inject=true` can make child processes see `$TMUX` / `$TMUX_PANE` and put the shim directory at the front of `PATH`. The shim supports common client commands such as `send-keys`, `capture-pane -p`, `list-panes`, `split-window`, `select-pane`, `break-pane`, and `display-popup`; it is not a tmux server implementation and does not support control mode (`-CC`).
+
+Configuration is loaded from `--config <path>` when given, else `ATTO_UI_TERMINAL_CONFIG` when set, then `$XDG_CONFIG_HOME/atto-ui/terminal.yaml`, then `~/.config/atto-ui/terminal.yaml`. See `crates/atm/README.md` for feature details, config examples, and focused validation commands.
 
 ### Themes
 

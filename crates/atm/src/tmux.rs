@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Minimal `tmux` command shim backed by the atto-ui IPC socket.
 //!
 //! This binary is intentionally a client-side translator: it parses common tmux

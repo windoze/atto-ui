@@ -1,0 +1,26 @@
+[package]
+name = "atm"
+version = "0.1.0"
+edition = "2024"
+description = "atto terminal multiplexer — a full multi-window terminal app built on atto-ui."
+
+[dependencies]
+anyhow = "1.0.101"
+atto-ui = { path = "../.." }
+atto-ui-terminal = { path = "../atto-ui-terminal" }
+crossterm = "0.29.0"
+ratatui = "0.30.0"
+
+[dev-dependencies]
+atto-ui-test-host = { path = "../atto-ui-test-host" }
+unicode-width = "0.2.2"
+
+[[bin]]
+name = "atm"
+path = "src/main.rs"
+test = false
+
+[[bin]]
+name = "tmux"
+path = "src/tmux.rs"
+test = false
