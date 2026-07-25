@@ -39,7 +39,7 @@ pub use settings::{
 };
 pub use terminal::{
     TerminalClipboardCopy, TerminalCommandBlock, TerminalCommandBlockPresentation,
-    TerminalCursorShape, TerminalEmulator, TerminalHandle, TerminalPrefixBinding,
+    TerminalCursorShape, TerminalEmulator, TerminalHandle, TerminalPalette, TerminalPrefixBinding,
     TerminalPrefixCommand, TerminalShellIntegration, TerminalShortcut, TerminalSnapshot,
     TerminalSystemClipboard,
 };

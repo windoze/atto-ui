@@ -1383,7 +1383,10 @@ fn terminal_cursor_shape_sequences_update_rendered_cursor() {
         .cell((0, 0))
         .expect("block cell");
     assert_eq!(handle.cursor_shape(), TerminalCursorShape::Block);
-    assert!(block.modifier.contains(Modifier::REVERSED));
+    // Block cursors paint the theme's terminal cursor color as the cell
+    // background with a contrasting glyph (instead of a bare REVERSED).
+    assert_eq!(block.bg, theme.terminal.cursor);
+    assert_eq!(block.fg, theme.terminal.cursor_text);
 
     handle.process_output_str("\x1b[4 q");
     terminal
@@ -1405,6 +1408,8 @@ fn terminal_cursor_shape_sequences_update_rendered_cursor() {
     let bar = terminal.backend().buffer().cell((0, 0)).expect("bar cell");
     assert_eq!(handle.cursor_shape(), TerminalCursorShape::Bar);
     assert_eq!(bar.symbol(), "▏");
+    // The bar glyph is painted in the cursor color so it stays visible.
+    assert_eq!(bar.fg, theme.terminal.cursor);
     assert!(!bar.modifier.contains(Modifier::REVERSED));
     assert!(!bar.modifier.contains(Modifier::UNDERLINED));
 
@@ -1418,7 +1423,8 @@ fn terminal_cursor_shape_sequences_update_rendered_cursor() {
         .cell((0, 0))
         .expect("default cell");
     assert_eq!(handle.cursor_shape(), TerminalCursorShape::Block);
-    assert!(default_block.modifier.contains(Modifier::REVERSED));
+    assert_eq!(default_block.bg, theme.terminal.cursor);
+    assert_eq!(default_block.fg, theme.terminal.cursor_text);
 }
 
 #[test]
@@ -1448,6 +1454,55 @@ fn terminal_config_palette_changes_rendered_colors() {
         .expect("default cell");
     assert_eq!(default.fg, Color::Rgb(0xab, 0xcd, 0xef));
     assert_eq!(default.bg, Color::Rgb(0x01, 0x02, 0x03));
+}
+
+#[test]
+fn terminal_apply_theme_changes_rendered_default_and_ansi_colors() {
+    // A terminal deriving its palette from the theme should re-render in the
+    // new theme's colors after apply_theme, without any explicit config.
+    let dark = Theme::dark();
+    let light = Theme::light();
+    let mut widget = TerminalEmulator::new();
+    let handle = widget.handle();
+    handle.apply_theme(&dark);
+
+    // ANSI green (\x1b[32m) then a default-color cell.
+    handle.process_output_str("\x1b[32mG\x1b[mD");
+
+    let mut terminal = Terminal::new(TestBackend::new(4, 1)).expect("terminal");
+    terminal
+        .draw(|f| widget.draw(f, Rect::new(0, 0, 4, 1), context(&dark)))
+        .expect("draw dark");
+    let green_dark = terminal.backend().buffer().cell((0, 0)).expect("green").fg;
+    let default_dark = terminal
+        .backend()
+        .buffer()
+        .cell((1, 0))
+        .expect("default")
+        .fg;
+    assert_eq!(green_dark, dark.terminal.ansi[2]);
+    assert_eq!(default_dark, dark.terminal.foreground);
+
+    // Switch to light and redraw with the light context.
+    handle.apply_theme(&light);
+    let mut terminal = Terminal::new(TestBackend::new(4, 1)).expect("terminal");
+    terminal
+        .draw(|f| widget.draw(f, Rect::new(0, 0, 4, 1), context(&light)))
+        .expect("draw light");
+    let default_light = terminal
+        .backend()
+        .buffer()
+        .cell((1, 0))
+        .expect("default")
+        .fg;
+    let default_light_bg = terminal
+        .backend()
+        .buffer()
+        .cell((1, 0))
+        .expect("default")
+        .bg;
+    assert_eq!(default_light, light.terminal.foreground);
+    assert_eq!(default_light_bg, light.terminal.background);
 }
 
 #[test]

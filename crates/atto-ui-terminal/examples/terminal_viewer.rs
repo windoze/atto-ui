@@ -45,6 +45,7 @@ enum TerminalViewerAction {
     CloseFocused,
     FocusWindow(WindowId),
     CommandContext(CommandContextMenuAction),
+    SetTheme(&'static str),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -162,6 +163,32 @@ fn build_menu(action_tx: mpsc::Sender<TerminalViewerAction>) -> MenuBar {
                 })
                 .shortcut("?"),
             ],
+        ),
+        MenuSpec::new(
+            "View",
+            vec![MenuItem::submenu(
+                "Theme",
+                vec![
+                    MenuItem::action("Dark", {
+                        let action_tx = action_tx.clone();
+                        move || {
+                            let _ = action_tx.send(TerminalViewerAction::SetTheme("dark"));
+                        }
+                    }),
+                    MenuItem::action("Light", {
+                        let action_tx = action_tx.clone();
+                        move || {
+                            let _ = action_tx.send(TerminalViewerAction::SetTheme("light"));
+                        }
+                    }),
+                    MenuItem::action("Turbo", {
+                        let action_tx = action_tx.clone();
+                        move || {
+                            let _ = action_tx.send(TerminalViewerAction::SetTheme("turbo"));
+                        }
+                    }),
+                ],
+            )],
         ),
         MenuSpec::new(
             "Windows",
@@ -1012,6 +1039,7 @@ fn main() -> Result<()> {
                 initial_spec_for_build.clone(),
                 terminal_config_for_build.clone(),
             )?;
+            session.panes.apply_theme(&desktop.theme);
             let terminal_id = session.id;
             terminal_sessions_for_build.borrow_mut().push(session);
             open_feature_guide_window(
@@ -1051,6 +1079,7 @@ fn main() -> Result<()> {
                             spec,
                             terminal_config_for_actions.clone(),
                         )?;
+                        session.panes.apply_theme(&desktop.theme);
                         terminal_sessions.borrow_mut().push(session);
                         next_window_number = next_window_number.saturating_add(1);
                     }
@@ -1067,6 +1096,7 @@ fn main() -> Result<()> {
                             spec,
                             terminal_config_for_actions.clone(),
                         )?;
+                        session.panes.apply_theme(&desktop.theme);
                         terminal_sessions.borrow_mut().push(session);
                         next_window_number = next_window_number.saturating_add(1);
                     }
@@ -1115,6 +1145,16 @@ fn main() -> Result<()> {
                             &mut command_context_for_actions.borrow_mut(),
                             action,
                         );
+                    }
+                    TerminalViewerAction::SetTheme(name) => {
+                        // Swap the desktop theme (affects window chrome, next
+                        // frame) and push the theme's terminal colors into every
+                        // live terminal session so ANSI colors track the theme.
+                        desktop.theme = Theme::named(name)?;
+                        let sessions = terminal_sessions.borrow();
+                        for session in sessions.iter() {
+                            session.panes.apply_theme(&desktop.theme);
+                        }
                     }
                 }
 

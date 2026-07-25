@@ -20,6 +20,58 @@ pub struct ThemeConfig {
     /// Named modifier lists (e.g. `["bold", "reverse"]`).
     #[serde(default)]
     pub styles: HashMap<String, Vec<String>>,
+
+    /// Optional terminal-emulator color overrides.
+    #[serde(default)]
+    pub terminal: Option<TerminalThemeConfig>,
+}
+
+/// Serializable overrides for a theme's [`TerminalTheme`](super::TerminalTheme).
+///
+/// Every field is optional; only the ones present override the base theme's
+/// terminal colors. Color strings accept the same syntax as [`ColorSpec`].
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TerminalThemeConfig {
+    /// ANSI colors 0-15. When present, must contain all 16 entries.
+    pub ansi: Option<Vec<String>>,
+    pub foreground: Option<String>,
+    pub background: Option<String>,
+    pub cursor: Option<String>,
+    pub cursor_text: Option<String>,
+    pub selection_bg: Option<String>,
+    pub selection_fg: Option<String>,
+}
+
+impl TerminalThemeConfig {
+    /// Applies these overrides onto `base`, resolving color strings.
+    pub(super) fn apply_onto(&self, base: &mut super::TerminalTheme) -> Result<()> {
+        if let Some(ansi) = &self.ansi {
+            if ansi.len() != 16 {
+                return Err(anyhow!(
+                    "terminal.ansi must contain exactly 16 colors, got {}",
+                    ansi.len()
+                ));
+            }
+            for (i, spec) in ansi.iter().enumerate() {
+                base.ansi[i] = parse_color(spec)
+                    .with_context(|| format!("invalid terminal ANSI color {i}"))?;
+            }
+        }
+        let set = |field: &mut Color, spec: &Option<String>, name: &str| -> Result<()> {
+            if let Some(s) = spec {
+                *field =
+                    parse_color(s).with_context(|| format!("invalid terminal {name} color"))?;
+            }
+            Ok(())
+        };
+        set(&mut base.foreground, &self.foreground, "foreground")?;
+        set(&mut base.background, &self.background, "background")?;
+        set(&mut base.cursor, &self.cursor, "cursor")?;
+        set(&mut base.cursor_text, &self.cursor_text, "cursor_text")?;
+        set(&mut base.selection_bg, &self.selection_bg, "selection_bg")?;
+        set(&mut base.selection_fg, &self.selection_fg, "selection_fg")?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

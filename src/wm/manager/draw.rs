@@ -12,7 +12,7 @@ use crate::composable::{
     ComponentContext, DragContext, DragPayload, DropEffect, MouseCoordinateSpace, ScrollbarHost,
     TabMode, TitleBarContext,
 };
-use crate::drawing::draw_shadow;
+use crate::drawing::{draw_shadow, sanitize_wide_char_edges};
 use crate::theme::Theme;
 
 use super::{
@@ -180,11 +180,21 @@ fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style, ch: char) {
     for y in rect.y..rect.y.saturating_add(rect.height) {
         for x in rect.x..rect.x.saturating_add(rect.width) {
             if let Some(cell) = buf.cell_mut((x, y)) {
+                // Reset first: a cell we're covering may carry a `skip` flag from
+                // a background surface (e.g. a terminal emulator marks wide-char
+                // continuation cells with set_skip(true)). ratatui's render diff
+                // never emits a skipped cell, so without clearing it our fill —
+                // and any foreground content drawn over it — would be dropped.
+                cell.reset();
                 cell.set_style(style);
                 cell.set_symbol(&symbol);
             }
         }
     }
+    // A background wide char whose head sits just left of the rect leaves its
+    // continuation half inside our first column; blank the head so it does not
+    // bleed into this surface.
+    sanitize_wide_char_edges(buf, rect, style);
 }
 
 fn draw_dock_auto_hide_handle(buf: &mut Buffer, rect: Rect, dock: &WindowDock, theme: &Theme) {

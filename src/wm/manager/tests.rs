@@ -39,6 +39,32 @@ impl EventHandling for DummyView {
 
 crate::impl_component_default_traits!(DummyView => Layout, Scrollable, FocusNav, DynamicTree);
 
+/// A view that draws a single wide glyph at a fixed offset inside its area,
+/// used to reproduce wide-character bleed across window boundaries.
+struct WideGlyphView {
+    /// Column offset within the view's area where the wide glyph is drawn.
+    col: u16,
+}
+
+impl Component for WideGlyphView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
+        frame.buffer_mut().set_string(
+            area.x.saturating_add(self.col),
+            area.y,
+            "你",
+            Style::default(),
+        );
+    }
+}
+
+impl EventHandling for WideGlyphView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
+    }
+}
+
+crate::impl_component_default_traits!(WideGlyphView => Layout, Scrollable, FocusNav, DynamicTree);
+
 fn assert_window_index_matches_order(wm: &WindowManager) {
     assert_eq!(wm.window_index.len(), wm.windows().len());
     for (idx, window) in wm.windows().iter().enumerate() {
@@ -318,6 +344,77 @@ fn window_min_size_mode_scroll_renders_window_border_scrollbars_on_overflow() {
     assert_eq!(
         buf.cell((right - 1, bottom)).expect("hbar right").symbol(),
         "►"
+    );
+}
+
+#[test]
+fn foreground_window_hides_background_wide_glyph_on_incremental_redraw() {
+    // Regression: a background wide glyph whose right half is overlapped by a
+    // foreground window's left border must not bleed through. This only fails on
+    // an *incremental* redraw (frame 2 diffs against frame 1), because the render
+    // diff skips the cell after a wide glyph; so we draw twice on one Terminal.
+    let bounds = Rect::new(0, 0, 80, 24);
+    let bg_rect = Rect::new(2, 2, 18, 6);
+    // BG inner area starts at (3, 3); col offset 5 places the glyph head at
+    // screen x = 8, continuation at x = 9.
+    let mut wm = WindowManager::new();
+    wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "BG",
+            bg_rect,
+            Box::new(WideGlyphView { col: 5 }),
+        ),
+        bounds,
+    );
+
+    let theme = Theme::dark();
+    let backend = TestBackend::new(bounds.width, bounds.height);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    // Frame 1: background only. The wide glyph is fully visible.
+    terminal
+        .draw(|f| wm.draw(f, bounds, &theme))
+        .expect("draw 1");
+    assert_eq!(
+        terminal
+            .backend()
+            .buffer()
+            .cell((8, 3))
+            .expect("glyph")
+            .symbol(),
+        "你",
+        "background wide glyph should be visible before overlap"
+    );
+
+    // Frame 2: open a foreground window whose left border is at x = 9, overlapping
+    // the glyph's right half. Its top border at y = 2 keeps row 3 on the vertical
+    // border (not a corner).
+    wm.add_window(
+        Window::new(
+            WindowKind::Tooltip,
+            "FG",
+            Rect::new(9, 2, 12, 4),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+    terminal
+        .draw(|f| wm.draw(f, bounds, &theme))
+        .expect("draw 2");
+
+    let buf = terminal.backend().buffer();
+    // The straddling glyph head must be blanked so it stops rendering 2-wide...
+    assert_eq!(
+        buf.cell((8, 3)).expect("head").symbol(),
+        " ",
+        "overlapped wide glyph head must be hidden\n{buf:?}"
+    );
+    // ...and the foreground window's left border must occupy its first column.
+    assert_eq!(
+        buf.cell((9, 3)).expect("border").symbol(),
+        "│",
+        "foreground border must occupy its first column\n{buf:?}"
     );
 }
 

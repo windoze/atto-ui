@@ -132,14 +132,29 @@ impl TerminalRuntimeConfig {
     }
 }
 
+/// Resolved terminal ANSI palette plus optional default fg/bg overrides.
+///
+/// `foreground`/`background` are `Some` only when explicitly configured; when
+/// `None`, rendering falls back to the theme's terminal colors.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct TerminalPalette {
+pub struct TerminalPalette {
     foreground: Option<Color>,
     background: Option<Color>,
     ansi: [Color; 16],
 }
 
 impl TerminalPalette {
+    /// Derives a palette from a theme's [`TerminalTheme`], pinning fg/bg to the
+    /// theme's terminal defaults.
+    pub fn from_theme(theme: &Theme) -> Self {
+        let t = &theme.terminal;
+        Self {
+            foreground: Some(t.foreground),
+            background: Some(t.background),
+            ansi: t.ansi,
+        }
+    }
+
     fn from_config(config: &TerminalPaletteConfig) -> Result<Self> {
         let ansi = config
             .ansi
@@ -274,6 +289,19 @@ mod tests {
             row,
             modifiers: KeyModifiers::NONE,
         }
+    }
+
+    #[test]
+    fn terminal_palette_from_theme_maps_terminal_colors() {
+        let dark = TerminalPalette::from_theme(&Theme::dark());
+        assert_eq!(dark.foreground, Some(Color::Gray));
+        assert_eq!(dark.background, Some(Color::Rgb(16, 16, 16)));
+        assert_eq!(dark.ansi[0], Color::Black);
+        assert_eq!(dark.ansi[15], Color::White);
+
+        let light = TerminalPalette::from_theme(&Theme::light());
+        assert_eq!(light.foreground, Some(Color::Black));
+        assert_eq!(light.background, Some(Color::Rgb(250, 250, 250)));
     }
 
     #[test]
@@ -3647,16 +3675,30 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
         };
         let max_scrollback = shared.max_scrollback();
         let cursor_shape = shared.cursor_shape;
+        let cursor_color = ctx.theme.terminal.cursor;
+        let cursor_text_color = ctx.theme.terminal.cursor_text;
         let palette = shared.palette.clone();
         let screen = shared.parser.screen_mut();
         let visible_top = visible_top_row(max_scrollback, screen.scrollback());
 
+        // Default cell colors: an explicitly configured palette fg/bg wins;
+        // otherwise fall back to the theme's terminal colors (not window_bg),
+        // so a terminal that derives its palette from the theme stays coherent.
         let base_style = ctx.theme.window_bg;
-        let base_fg = palette.foreground.or(base_style.fg);
-        let base_bg = palette.background.or(base_style.bg);
+        let base_fg = palette
+            .foreground
+            .or(Some(ctx.theme.terminal.foreground))
+            .or(base_style.fg);
+        let base_bg = palette
+            .background
+            .or(Some(ctx.theme.terminal.background))
+            .or(base_style.bg);
         let command_output_style = command_output_style(ctx.theme);
         let command_separator_style = command_separator_style(ctx.theme);
         let command_failure_style = command_failure_style(ctx.theme);
+        let selection_style = Style::default()
+            .bg(ctx.theme.terminal.selection_bg)
+            .fg(ctx.theme.terminal.selection_fg);
 
         let buf = frame.buffer_mut();
         for y in 0..area.height {
@@ -3710,7 +3752,7 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
                     .iter()
                     .any(|(start, end)| x >= *start && x < *end)
                 {
-                    ctx.theme.selection
+                    selection_style
                 } else {
                     style
                 };
@@ -3738,7 +3780,7 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
                 let dst_x = area.x.saturating_add(cur_col);
                 let dst_y = area.y.saturating_add(cur_row);
                 if let Some(dst) = buf.cell_mut((dst_x, dst_y)) {
-                    apply_cursor_shape(dst, cursor_shape);
+                    apply_cursor_shape(dst, cursor_shape, cursor_color, cursor_text_color);
                 }
             }
         }
@@ -4017,6 +4059,14 @@ impl TerminalHandle {
         let runtime_config = TerminalRuntimeConfig::from_config(config)?;
         self.shared.lock().apply_runtime_config(runtime_config);
         Ok(())
+    }
+
+    /// Refreshes the ANSI palette from a theme's [`TerminalTheme`].
+    ///
+    /// Use this when the surrounding [`Theme`] changes at runtime so the
+    /// emulator's colors track the active theme.
+    pub fn apply_theme(&self, theme: &Theme) {
+        self.shared.lock().palette = TerminalPalette::from_theme(theme);
     }
 
     pub fn set_scrollback_len(&self, len: usize) {
@@ -4455,16 +4505,27 @@ fn cell_style(
     style.add_modifier(mods)
 }
 
-fn apply_cursor_shape(cell: &mut Cell, shape: TerminalCursorShape) {
+fn apply_cursor_shape(
+    cell: &mut Cell,
+    shape: TerminalCursorShape,
+    cursor: Color,
+    cursor_text: Color,
+) {
     match shape {
         TerminalCursorShape::Block => {
-            cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
+            // Paint the cursor color as the cell background with a contrasting
+            // glyph, rather than a bare REVERSED, so the cursor color is honored.
+            cell.set_style(cell.style().bg(cursor).fg(cursor_text));
         }
         TerminalCursorShape::Underline => {
-            cell.set_style(cell.style().add_modifier(Modifier::UNDERLINED));
+            cell.set_style(cell.style().fg(cursor).add_modifier(Modifier::UNDERLINED));
         }
         TerminalCursorShape::Bar => {
+            // A bare `▏` glyph in the cell's own (often dim) fg is nearly
+            // invisible; color it with the cursor color so bar-style cursors
+            // (e.g. Claude Code / Ink apps) stay visible.
             cell.set_symbol(CURSOR_BAR_SYMBOL);
+            cell.set_style(cell.style().fg(cursor));
             cell.set_skip(false);
         }
     }

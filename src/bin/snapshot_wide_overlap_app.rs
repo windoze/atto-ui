@@ -126,13 +126,11 @@ fn main() -> Result<()> {
         Window::new(WindowKind::Normal, "BG", bg_rect, Box::new(BgView)),
         screen,
     );
-    // Use a Tooltip so it stays on top without stealing focus (keeps its border "inactive").
-    let _fg_id = desktop.add_window(
-        Window::new(WindowKind::Tooltip, "FG", fg_rect, Box::new(FgView)),
-        screen,
-    );
 
-    let res = run(&mut terminal, &mut desktop);
+    // The foreground window is opened only on demand (press `o`), so tests can
+    // first observe the background wide glyph fully rendered, then reproduce the
+    // *incremental* overlap that the render diff must handle correctly.
+    let res = run(&mut terminal, &mut desktop, fg_rect);
 
     disable_raw_mode()?;
     execute!(
@@ -145,7 +143,12 @@ fn main() -> Result<()> {
     res
 }
 
-fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, desktop: &mut Desktop) -> Result<()> {
+fn run(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    desktop: &mut Desktop,
+    fg_rect: Rect,
+) -> Result<()> {
+    let mut fg_open = false;
     loop {
         terminal.draw(|f| desktop.draw(f))?;
 
@@ -175,6 +178,25 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, desktop: &mut Desk
         }
 
         let screen: Rect = terminal.size()?.into();
+
+        // Press `o` to open the foreground window over the already-rendered
+        // background, reproducing the incremental wide-glyph overlap.
+        if let Event::Key(KeyEvent {
+            code: KeyCode::Char('o'),
+            kind: KeyEventKind::Press,
+            ..
+        }) = ev
+            && !fg_open
+        {
+            fg_open = true;
+            // A Tooltip stays on top without stealing focus (inactive border).
+            desktop.add_window(
+                Window::new(WindowKind::Tooltip, "FG", fg_rect, Box::new(FgView)),
+                screen,
+            );
+            continue;
+        }
+
         let _ = desktop.handle_event(&ev, screen);
     }
 

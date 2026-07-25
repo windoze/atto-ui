@@ -195,6 +195,14 @@ impl TerminalPaneGroupHandle {
         Ok(())
     }
 
+    /// Refreshes every pane's ANSI palette from the given theme's terminal colors.
+    pub fn apply_theme(&self, theme: &atto_ui::theme::Theme) {
+        let panes = self.shared.lock().snapshots();
+        for pane in panes {
+            pane.handle.apply_theme(theme);
+        }
+    }
+
     /// Splits the addressed pane, or the active pane when `pane_id` is `None`.
     pub fn split_window(
         &self,

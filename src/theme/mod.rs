@@ -8,7 +8,10 @@ use anyhow::{Context, Result, anyhow};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
 
-pub use config::{ThemeConfig, ThemeConfigFormat};
+pub use config::{TerminalThemeConfig, ThemeConfig, ThemeConfigFormat};
+
+// `Theme` and `TerminalTheme` are defined in this module and thus already
+// reachable as `theme::TerminalTheme`; no additional re-export is needed.
 
 #[derive(Clone, Debug)]
 pub struct WidgetTheme {
@@ -17,6 +20,112 @@ pub struct WidgetTheme {
     pub dim: Style,
     pub disabled: Style,
     pub accent: Style,
+}
+
+/// Terminal-emulator colors owned by the theme.
+///
+/// Unlike the rest of `Theme`, these are raw [`Color`] values (not `Style`s):
+/// they feed a terminal emulator's ANSI palette and cursor/selection rendering,
+/// where per-cell attributes come from the VT stream rather than the theme. A
+/// terminal component derives its palette from this via `TerminalPalette::from_theme`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalTheme {
+    /// ANSI colors 0-15 (indices 0-7 normal, 8-15 bright).
+    pub ansi: [Color; 16],
+    /// Default foreground for cells that request the terminal default color.
+    pub foreground: Color,
+    /// Default background for cells that request the terminal default color.
+    pub background: Color,
+    /// Cursor cell color.
+    pub cursor: Color,
+    /// Contrasting color for the glyph under a block cursor.
+    pub cursor_text: Color,
+    /// Terminal selection highlight background.
+    pub selection_bg: Color,
+    /// Terminal selection highlight foreground.
+    pub selection_fg: Color,
+}
+
+impl TerminalTheme {
+    /// The dark-theme terminal palette, using standard ANSI color names.
+    fn dark() -> Self {
+        Self {
+            ansi: [
+                Color::Black,
+                Color::Red,
+                Color::Green,
+                Color::Yellow,
+                Color::Blue,
+                Color::Magenta,
+                Color::Cyan,
+                Color::Gray,
+                Color::DarkGray,
+                Color::LightRed,
+                Color::LightGreen,
+                Color::LightYellow,
+                Color::LightBlue,
+                Color::LightMagenta,
+                Color::LightCyan,
+                Color::White,
+            ],
+            foreground: Color::Gray,
+            background: Color::Rgb(16, 16, 16),
+            cursor: Color::LightBlue,
+            cursor_text: Color::Black,
+            selection_bg: Color::LightBlue,
+            selection_fg: Color::Black,
+        }
+    }
+
+    /// The light-theme terminal palette. Bright variants are darkened so text
+    /// stays legible against a near-white background.
+    fn light() -> Self {
+        Self {
+            ansi: [
+                Color::Black,
+                Color::Red,
+                Color::Green,
+                Color::Rgb(0xb0, 0x86, 0x00), // yellow -> amber for contrast
+                Color::Blue,
+                Color::Magenta,
+                Color::Cyan,
+                Color::DarkGray,
+                Color::Gray,
+                Color::LightRed,
+                Color::LightGreen,
+                Color::Rgb(0x99, 0x73, 0x00),
+                Color::LightBlue,
+                Color::LightMagenta,
+                Color::LightCyan,
+                Color::White,
+            ],
+            foreground: Color::Black,
+            background: Color::Rgb(250, 250, 250),
+            cursor: Color::Blue,
+            cursor_text: Color::White,
+            selection_bg: Color::Blue,
+            selection_fg: Color::White,
+        }
+    }
+
+    /// The Turbo Vision terminal palette on the gray window surface.
+    fn turbo() -> Self {
+        Self {
+            ansi: TerminalTheme::dark().ansi,
+            foreground: Color::Black,
+            background: Color::Gray,
+            cursor: Color::Green,
+            cursor_text: Color::Black,
+            selection_bg: Color::Green,
+            selection_fg: Color::Black,
+        }
+    }
+}
+
+impl Default for TerminalTheme {
+    fn default() -> Self {
+        Self::dark()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -45,6 +154,8 @@ pub struct Theme {
     pub status_bar_key: Style,
 
     pub widget: WidgetTheme,
+
+    pub terminal: TerminalTheme,
 
     glyphs: HashMap<String, String>,
     named_styles: HashMap<String, Style>,
@@ -124,6 +235,7 @@ impl Theme {
                 disabled: Style::default().fg(Color::DarkGray),
                 accent: Style::default().fg(Color::LightBlue),
             },
+            terminal: TerminalTheme::dark(),
             glyphs: default_glyphs(),
             named_styles: HashMap::new(),
             named_styles_revision: next_theme_revision(),
@@ -216,6 +328,7 @@ impl Theme {
                 disabled: Style::default().fg(Color::DarkGray),
                 accent: Style::default().fg(Color::Blue),
             },
+            terminal: TerminalTheme::light(),
             glyphs: default_glyphs(),
             named_styles: HashMap::new(),
             named_styles_revision: next_theme_revision(),
@@ -295,6 +408,7 @@ impl Theme {
                 disabled: Style::default().fg(Color::DarkGray).bg(Color::Gray),
                 accent: Style::default().fg(Color::Green).bg(Color::Gray),
             },
+            terminal: TerminalTheme::turbo(),
             glyphs: default_glyphs(),
             named_styles: HashMap::new(),
             named_styles_revision: next_theme_revision(),
@@ -363,7 +477,13 @@ impl Theme {
         }
 
         self.refresh_typed_fields_from_named_styles();
-        if has_style_overlay {
+
+        let has_terminal_overlay = cfg.terminal.is_some();
+        if let Some(terminal_cfg) = &cfg.terminal {
+            terminal_cfg.apply_onto(&mut self.terminal)?;
+        }
+
+        if has_style_overlay || has_terminal_overlay {
             self.bump_named_styles_revision();
         }
         Ok(())

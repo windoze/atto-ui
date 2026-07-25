@@ -431,3 +431,66 @@ fn theme_border_glyphs_fall_back_when_named_tokens_missing() {
     assert_eq!(theme.border_set(false).top_left, "┌");
     assert_eq!(theme.border_set(true).top_left, "╔");
 }
+
+#[test]
+fn theme_presets_carry_distinct_terminal_colors() {
+    let dark = Theme::dark().terminal;
+    assert_eq!(dark.ansi[0], Color::Black);
+    assert_eq!(dark.ansi[15], Color::White);
+    assert_eq!(dark.foreground, Color::Gray);
+    assert_eq!(dark.background, Color::Rgb(16, 16, 16));
+    assert_eq!(dark.cursor, Color::LightBlue);
+
+    let light = Theme::light().terminal;
+    assert_eq!(light.foreground, Color::Black);
+    assert_eq!(light.background, Color::Rgb(250, 250, 250));
+    assert_eq!(light.cursor, Color::Blue);
+
+    let turbo = Theme::turbo().terminal;
+    assert_eq!(turbo.background, Color::Gray);
+    assert_eq!(turbo.cursor, Color::Green);
+}
+
+#[test]
+fn terminal_theme_default_matches_dark() {
+    assert_eq!(super::TerminalTheme::default(), Theme::dark().terminal);
+}
+
+#[test]
+fn theme_config_terminal_overlay_overrides_only_specified_fields() {
+    let yaml = r##"
+terminal:
+  foreground: "#abcdef"
+  cursor: "green"
+  ansi: ["#000000", "red", "green", "yellow", "blue", "magenta", "cyan",
+         "white", "darkgray", "lightred", "lightgreen", "lightyellow",
+         "lightblue", "lightmagenta", "lightcyan", "#ffffff"]
+"##;
+
+    let cfg = ThemeConfig::from_str(yaml, ThemeConfigFormat::Yaml).expect("parse yaml");
+
+    let mut theme = Theme::dark();
+    let before_bg = theme.terminal.background;
+    let before_revision = theme.named_styles_revision();
+    theme.apply_config_overlay(&cfg).expect("apply overlay");
+
+    assert_eq!(theme.terminal.foreground, Color::Rgb(0xab, 0xcd, 0xef));
+    assert_eq!(theme.terminal.cursor, Color::Green);
+    assert_eq!(theme.terminal.ansi[0], Color::Rgb(0, 0, 0));
+    assert_eq!(theme.terminal.ansi[15], Color::Rgb(0xff, 0xff, 0xff));
+    // Unspecified fields keep the base value.
+    assert_eq!(theme.terminal.background, before_bg);
+    // A terminal overlay bumps the revision so components can invalidate caches.
+    assert_ne!(theme.named_styles_revision(), before_revision);
+}
+
+#[test]
+fn theme_config_terminal_ansi_wrong_length_is_rejected() {
+    let yaml = r##"
+terminal:
+  ansi: ["red", "green"]
+"##;
+    let cfg = ThemeConfig::from_str(yaml, ThemeConfigFormat::Yaml).expect("parse yaml");
+    let mut theme = Theme::dark();
+    assert!(theme.apply_config_overlay(&cfg).is_err());
+}

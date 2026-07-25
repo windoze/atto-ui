@@ -7,6 +7,7 @@ use ratatui::backend::{Backend, ClearType, WindowSize};
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect, Size};
 use ratatui::style::Style;
+use unicode_width::UnicodeWidthStr;
 
 use crate::composable::scroll::{clamp_scroll_offset, scroll_offset_for_input_event};
 use crate::composable::{
@@ -262,6 +263,12 @@ impl WindowMinSizeView {
                     dst_buf.cell_mut((area.x.saturating_add(dx), area.y.saturating_add(dy)))
                 {
                     *dst = cell.clone();
+                    // A wide char whose head is the last copied column has its
+                    // continuation clipped by `area`; blank the head so the
+                    // copied region stays well-formed for the render diff.
+                    if dx + 1 == area.width && UnicodeWidthStr::width(cell.symbol()) > 1 {
+                        dst.set_symbol(" ");
+                    }
                 }
             }
         }

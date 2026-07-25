@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
+use unicode_width::UnicodeWidthStr;
 
 use crate::clipboard::encode_base64;
 
@@ -112,6 +113,59 @@ pub fn image_sequence_or_fallback(
         .unwrap_or_else(|| fallback.into())
 }
 
+/// Returns the display width of a buffer cell's symbol (0 for a blank).
+fn cell_symbol_width(buf: &Buffer, x: u16, y: u16) -> usize {
+    buf.cell((x, y))
+        .map(|cell| UnicodeWidthStr::width(cell.symbol()))
+        .unwrap_or(0)
+}
+
+/// Blanks the wide-character *head* at `(x, y)` when its trailing continuation
+/// cell has been (or is about to be) overwritten by another surface.
+///
+/// ratatui's render diff assumes a well-formed buffer: a double-width cell is
+/// always followed by a blank continuation cell, which it skips when flushing.
+/// When a foreground surface overwrites only the continuation half of a
+/// background wide char (e.g. a dialog whose left edge lands on the right half
+/// of a CJK glyph), the head cell is left intact and the terminal still renders
+/// it two columns wide — bleeding the glyph's right half into the foreground.
+/// Resetting the head to a blank restores the invariant so the diff emits the
+/// foreground cell normally.
+fn blank_wide_head_at(buf: &mut Buffer, x: u16, y: u16, style: Style) {
+    if cell_symbol_width(buf, x, y) > 1
+        && let Some(cell) = buf.cell_mut((x, y))
+    {
+        cell.set_symbol(" ");
+        cell.set_style(style);
+    }
+}
+
+/// Blanks a wide-character head at `(x - 1, y)` whose continuation half is the
+/// cell `(x, y)` we are about to overwrite. No-op at the buffer's left edge.
+fn blank_wide_head_left_of(buf: &mut Buffer, x: u16, y: u16, style: Style) {
+    if x > 0 {
+        blank_wide_head_at(buf, x - 1, y, style);
+    }
+}
+
+/// Sanitizes wide characters straddling the vertical edges of `rect`.
+///
+/// For each row in `rect`, if the cell immediately to the left of the rect is a
+/// wide char, its continuation half sits inside the rect's first column and
+/// would otherwise bleed in; blank the head. (The right edge needs no work: a
+/// wide char whose head is the rect's last column keeps its continuation just
+/// outside, which the neighboring surface owns and will sanitize in turn.)
+pub(crate) fn sanitize_wide_char_edges(buf: &mut Buffer, rect: Rect, style: Style) {
+    if rect.width == 0 || rect.height == 0 || rect.x == 0 {
+        return;
+    }
+    let left = rect.x - 1;
+    let y_end = rect.y.saturating_add(rect.height);
+    for y in rect.y..y_end {
+        blank_wide_head_at(buf, left, y, style);
+    }
+}
+
 pub(crate) fn draw_shadow(buf: &mut Buffer, rect: Rect, bounds: Rect, style: Style) {
     if rect.width == 0 || rect.height == 0 {
         return;
@@ -129,6 +183,7 @@ pub(crate) fn draw_shadow(buf: &mut Buffer, rect: Rect, bounds: Rect, style: Sty
             if shadow_x < bounds.x || y < bounds.y {
                 continue;
             }
+            blank_wide_head_left_of(buf, shadow_x, y, style);
             if let Some(cell) = buf.cell_mut((shadow_x, y)) {
                 cell.set_symbol(" ");
                 cell.set_style(style);
@@ -144,6 +199,7 @@ pub(crate) fn draw_shadow(buf: &mut Buffer, rect: Rect, bounds: Rect, style: Sty
             if x < bounds.x || shadow_y < bounds.y {
                 continue;
             }
+            blank_wide_head_left_of(buf, x, shadow_y, style);
             if let Some(cell) = buf.cell_mut((x, shadow_y)) {
                 cell.set_symbol(" ");
                 cell.set_style(style);
@@ -155,10 +211,12 @@ pub(crate) fn draw_shadow(buf: &mut Buffer, rect: Rect, bounds: Rect, style: Sty
         && shadow_y < bounds.y.saturating_add(bounds.height)
         && shadow_x >= bounds.x
         && shadow_y >= bounds.y
-        && let Some(cell) = buf.cell_mut((shadow_x, shadow_y))
     {
-        cell.set_symbol(" ");
-        cell.set_style(style);
+        blank_wide_head_left_of(buf, shadow_x, shadow_y, style);
+        if let Some(cell) = buf.cell_mut((shadow_x, shadow_y)) {
+            cell.set_symbol(" ");
+            cell.set_style(style);
+        }
     }
 }
 
@@ -287,6 +345,73 @@ mod tests {
             terminal_image_sequence(ImageProtocol::Iterm2, ImageData::Binary(b"png"), &options)
                 .as_deref(),
             Some("\x1b]1337;File=inline=1;width=2;height=1:cG5n\x07")
+        );
+    }
+
+    use ratatui::layout::Position;
+
+    fn wide_bg(width: u16) -> Buffer {
+        // A background buffer with a CJK wide char whose head is at column 0.
+        let mut buf = Buffer::empty(Rect::new(0, 0, width, 1));
+        buf[(0, 0)].set_symbol("中");
+        buf
+    }
+
+    #[test]
+    fn sanitize_blanks_wide_head_straddling_left_edge() {
+        // Wide head at column 0, foreground rect starts at column 1 (landing on
+        // the char's continuation half).
+        let mut buf = wide_bg(4);
+        let rect = Rect::new(1, 0, 3, 1);
+        // Foreground fills its own columns with spaces (as fill_rect does).
+        for x in rect.x..rect.x + rect.width {
+            buf[(x, 0)].set_symbol(" ");
+        }
+        sanitize_wide_char_edges(&mut buf, rect, Style::reset());
+        // The straddling head must be blanked so it no longer renders 2-wide.
+        assert_eq!(buf[(0, 0)].symbol(), " ");
+    }
+
+    #[test]
+    fn sanitize_is_noop_when_left_neighbor_is_narrow() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 1));
+        buf[(0, 0)].set_symbol("a");
+        sanitize_wide_char_edges(&mut buf, Rect::new(1, 0, 3, 1), Style::reset());
+        assert_eq!(buf[(0, 0)].symbol(), "a");
+    }
+
+    #[test]
+    fn sanitize_lets_diff_emit_the_foreground_first_column() {
+        // Reproduce the render-diff skip: without sanitizing, the wide head makes
+        // the diff skip the foreground's first column; after sanitizing it emits.
+        let width = 4u16;
+        let prev = wide_bg(width); // what the terminal currently shows
+        let mut next = wide_bg(width);
+        let rect = Rect::new(1, 0, 3, 1);
+        for x in rect.x..rect.x + rect.width {
+            next[(x, 0)].set_symbol("│"); // foreground border in first column
+        }
+
+        // Before sanitizing: the wide head at col 0 survives, so diff skips col 1.
+        let skipped: Vec<Position> = prev
+            .diff(&next)
+            .iter()
+            .map(|(x, y, _)| Position::new(*x, *y))
+            .collect();
+        assert!(
+            !skipped.contains(&Position::new(1, 0)),
+            "expected diff to skip the poisoned first column before sanitizing"
+        );
+
+        sanitize_wide_char_edges(&mut next, rect, Style::reset());
+        let emitted: Vec<Position> = prev
+            .diff(&next)
+            .iter()
+            .map(|(x, y, _)| Position::new(*x, *y))
+            .collect();
+        assert!(
+            emitted.contains(&Position::new(1, 0)),
+            "after sanitizing, the foreground first column must be emitted"
         );
     }
 }
