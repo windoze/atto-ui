@@ -108,7 +108,10 @@ impl TerminalShared {
         self.prefix_pending = false;
     }
 
-    pub(crate) fn set_prefix_bindings(&mut self, bindings: impl IntoIterator<Item = TerminalPrefixBinding>) {
+    pub(crate) fn set_prefix_bindings(
+        &mut self,
+        bindings: impl IntoIterator<Item = TerminalPrefixBinding>,
+    ) {
         self.prefix_bindings.clear();
         for binding in bindings {
             self.set_prefix_binding(binding);
@@ -116,7 +119,10 @@ impl TerminalShared {
         self.prefix_pending = false;
     }
 
-    pub(crate) fn prefix_command_for_event(&self, event: KeyEvent) -> Option<TerminalPrefixCommand> {
+    pub(crate) fn prefix_command_for_event(
+        &self,
+        event: KeyEvent,
+    ) -> Option<TerminalPrefixCommand> {
         if self.prefix_shortcut.matches(event) {
             return Some(TerminalPrefixCommand::SendPrefix);
         }
@@ -482,7 +488,10 @@ impl TerminalShared {
         self.scroll_to_command_block(index).then_some(index)
     }
 
-    pub(crate) fn select_command_block_output(&mut self, index: usize) -> Option<TerminalSelectionRange> {
+    pub(crate) fn select_command_block_output(
+        &mut self,
+        index: usize,
+    ) -> Option<TerminalSelectionRange> {
         let range = self.command_block_text_range(index, CommandBlockTextKind::Output)?;
         self.selection.start_keyboard(range.start);
         self.selection.update(range.end);
@@ -506,7 +515,11 @@ impl TerminalShared {
         Some(bytes)
     }
 
-    pub(crate) fn command_block_text(&mut self, index: usize, kind: CommandBlockTextKind) -> Option<String> {
+    pub(crate) fn command_block_text(
+        &mut self,
+        index: usize,
+        kind: CommandBlockTextKind,
+    ) -> Option<String> {
         let range = self.command_block_text_range(index, kind)?;
         let max_scrollback = self.max_scrollback();
         let text = selected_text_from_screen(self.parser.screen_mut(), max_scrollback, range)?;

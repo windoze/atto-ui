@@ -34,7 +34,11 @@ pub(crate) fn restore_buffer_picker_focus(desktop: &mut Desktop, state: &Arc<Mut
     }
 }
 
-pub(crate) fn open_buffer_picker(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppState>>) {
+pub(crate) fn open_buffer_picker(
+    desktop: &mut Desktop,
+    screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+) {
     if let Some(id) = state.lock().buffer_picker_window {
         if desktop.wm.window(id).is_some() {
             return;
@@ -100,7 +104,10 @@ pub(crate) fn buffer_picker_items(
     items
 }
 
-pub(crate) fn buffer_picker_item(window: WindowId, summary: EditorTabSummary) -> PickerItem<AppAction> {
+pub(crate) fn buffer_picker_item(
+    window: WindowId,
+    summary: EditorTabSummary,
+) -> PickerItem<AppAction> {
     let title = if summary.dirty {
         format!("{}*", summary.title)
     } else {

@@ -250,7 +250,10 @@ pub(crate) fn user_prompt_text(message: &ChatMessage) -> Option<String> {
     (!text.trim().is_empty()).then_some(text)
 }
 
-pub(crate) fn mutating_tools_allowed_for_turn(plan_mode: PlanMode, plan_decision: &PlanTurnDecision) -> bool {
+pub(crate) fn mutating_tools_allowed_for_turn(
+    plan_mode: PlanMode,
+    plan_decision: &PlanTurnDecision,
+) -> bool {
     plan_mode == PlanMode::Off && !plan_decision.requires_plan()
 }
 

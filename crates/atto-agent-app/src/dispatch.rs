@@ -256,7 +256,10 @@ pub(crate) fn maybe_continue_deepseek_tool_loop(
     true
 }
 
-pub(crate) fn tool_loop_ready_for_continuation(messages: &[ChatMessage], message_id: ChatMessageId) -> bool {
+pub(crate) fn tool_loop_ready_for_continuation(
+    messages: &[ChatMessage],
+    message_id: ChatMessageId,
+) -> bool {
     let Some(message) = messages.iter().find(|message| message.id == message_id) else {
         return false;
     };

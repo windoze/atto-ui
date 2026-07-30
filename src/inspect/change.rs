@@ -12,11 +12,11 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 
+use crate::ComponentError;
 use crate::app::{Desktop, MenuItem};
 use crate::composable::Component;
 use crate::reactive::DirtySignal;
 use crate::wm::Window;
-use crate::ComponentError;
 
 pub(super) fn poll_interval() -> Duration {
     Duration::from_millis(10)

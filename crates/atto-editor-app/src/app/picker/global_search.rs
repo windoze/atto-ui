@@ -29,7 +29,10 @@ pub(crate) fn process_global_search_picker_events(
     }
 }
 
-pub(crate) fn restore_global_search_picker_focus(desktop: &mut Desktop, state: &Arc<Mutex<AppState>>) {
+pub(crate) fn restore_global_search_picker_focus(
+    desktop: &mut Desktop,
+    state: &Arc<Mutex<AppState>>,
+) {
     let restore = {
         let mut s = state.lock();
         s.global_search_picker_window = None;

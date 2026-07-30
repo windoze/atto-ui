@@ -3,7 +3,11 @@
 
 use super::*;
 
-pub(crate) fn process_workspace_lsp_events(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppState>>) {
+pub(crate) fn process_workspace_lsp_events(
+    desktop: &mut Desktop,
+    screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+) {
     let workspace_state = state.lock().workspace_state.clone();
     let (events, last_error) = {
         let mut workspace = workspace_state.lock();
@@ -48,7 +52,11 @@ pub(crate) fn process_workspace_lsp_events(desktop: &mut Desktop, screen: Rect, 
     }
 }
 
-pub(crate) fn process_editor_events(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppState>>) {
+pub(crate) fn process_editor_events(
+    desktop: &mut Desktop,
+    screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+) {
     let queues = {
         let s = state.lock();
         s.editor_events

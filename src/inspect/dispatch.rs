@@ -23,7 +23,10 @@ pub(super) enum DispatchTarget {
     Component,
 }
 
-pub(super) fn resolve_dispatch_target(desktop: &crate::app::Desktop, id: &str) -> Option<DispatchTarget> {
+pub(super) fn resolve_dispatch_target(
+    desktop: &crate::app::Desktop,
+    id: &str,
+) -> Option<DispatchTarget> {
     if menu_exists(&desktop.menu, id) {
         Some(DispatchTarget::Menu)
     } else if window_exists(&desktop.wm, id) {
@@ -39,7 +42,11 @@ pub(super) fn resolve_dispatch_target(desktop: &crate::app::Desktop, id: &str) -
 // Menu backend
 // ---------------------------------------------------------------------------
 
-pub(super) fn menu_get_property(menu: &crate::app::MenuBar, id: &str, name: &str) -> Option<ComponentValue> {
+pub(super) fn menu_get_property(
+    menu: &crate::app::MenuBar,
+    id: &str,
+    name: &str,
+) -> Option<ComponentValue> {
     if let Some(spec) = menu_find_spec(menu, id) {
         return match name {
             "title" => Some(ComponentValue::String(spec.title.get())),
@@ -234,7 +241,10 @@ pub(super) fn window_get_property(
     }
 }
 
-pub(super) fn window_property_names(wm: &crate::wm::WindowManager, id: &str) -> Option<Vec<String>> {
+pub(super) fn window_property_names(
+    wm: &crate::wm::WindowManager,
+    id: &str,
+) -> Option<Vec<String>> {
     window_find(wm, id).map(|_| {
         vec![
             "title".to_string(),

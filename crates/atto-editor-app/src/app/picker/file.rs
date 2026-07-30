@@ -88,7 +88,9 @@ pub(crate) fn open_file_picker(desktop: &mut Desktop, screen: Rect, state: &Arc<
 
 /// Returns picker items from the cache when it matches the current workspace
 /// roots, otherwise `None` (a background build is needed).
-pub(crate) fn file_picker_cached_items(state: &Arc<Mutex<AppState>>) -> Option<Vec<PickerItem<AppAction>>> {
+pub(crate) fn file_picker_cached_items(
+    state: &Arc<Mutex<AppState>>,
+) -> Option<Vec<PickerItem<AppAction>>> {
     let s = state.lock();
     let roots = canonical_workspace_roots(&s.workspace_roots);
     s.file_picker_cache
@@ -99,7 +101,9 @@ pub(crate) fn file_picker_cached_items(state: &Arc<Mutex<AppState>>) -> Option<V
 
 /// Builds the workspace file index on a background thread and returns a receiver
 /// the picker polls for the resulting items.
-pub(crate) fn spawn_file_picker_index(state: &Arc<Mutex<AppState>>) -> Receiver<Vec<PickerItem<AppAction>>> {
+pub(crate) fn spawn_file_picker_index(
+    state: &Arc<Mutex<AppState>>,
+) -> Receiver<Vec<PickerItem<AppAction>>> {
     let (tx, rx) = mpsc::channel();
     let state = state.clone();
     thread::spawn(move || {
@@ -141,7 +145,9 @@ pub(crate) fn canonical_workspace_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
-pub(crate) fn file_picker_items_from_index(index: &WorkspaceFileIndex) -> Vec<PickerItem<AppAction>> {
+pub(crate) fn file_picker_items_from_index(
+    index: &WorkspaceFileIndex,
+) -> Vec<PickerItem<AppAction>> {
     index
         .entries
         .iter()

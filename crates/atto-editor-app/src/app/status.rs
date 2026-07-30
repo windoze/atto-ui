@@ -147,7 +147,10 @@ pub(crate) fn active_editor_diagnostics_summary(
     None
 }
 
-pub(crate) fn active_editor_status(desktop: &Desktop, state: &Arc<Mutex<AppState>>) -> Option<EditorStatus> {
+pub(crate) fn active_editor_status(
+    desktop: &Desktop,
+    state: &Arc<Mutex<AppState>>,
+) -> Option<EditorStatus> {
     let focused = desktop.wm.focused();
 
     {

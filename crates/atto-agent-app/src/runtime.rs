@@ -470,7 +470,10 @@ pub(crate) fn run_with_config_mock_token_delay_and_compact_policy(
     run_result.and(save_result)
 }
 
-pub(crate) fn restore_transcript_if_configured(store: &ChatMessageStore, path: Option<&Path>) -> Result<()> {
+pub(crate) fn restore_transcript_if_configured(
+    store: &ChatMessageStore,
+    path: Option<&Path>,
+) -> Result<()> {
     let Some(path) = path else {
         return Ok(());
     };

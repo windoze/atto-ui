@@ -10,7 +10,10 @@ pub(crate) enum CapturedKeyAction {
     SystemClipboardCopy(String),
 }
 
-pub(crate) fn handle_captured_key(shared: &mut TerminalShared, event: KeyEvent) -> CapturedKeyAction {
+pub(crate) fn handle_captured_key(
+    shared: &mut TerminalShared,
+    event: KeyEvent,
+) -> CapturedKeyAction {
     if shared.copy_mode.is_some() {
         return handle_copy_mode_key(shared, event);
     }
@@ -55,7 +58,10 @@ pub(crate) fn handle_command_navigation_key(shared: &mut TerminalShared, event: 
     }
 }
 
-pub(crate) fn handle_copy_mode_key(shared: &mut TerminalShared, event: KeyEvent) -> CapturedKeyAction {
+pub(crate) fn handle_copy_mode_key(
+    shared: &mut TerminalShared,
+    event: KeyEvent,
+) -> CapturedKeyAction {
     if event.kind == KeyEventKind::Release {
         return CapturedKeyAction::Consumed;
     }

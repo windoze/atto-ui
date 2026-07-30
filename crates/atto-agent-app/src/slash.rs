@@ -29,7 +29,11 @@ pub(crate) fn agent_slash_commands() -> Vec<ChatSlashCommand> {
     ]
 }
 
-pub(crate) fn submit_slash_command_text(store: &ChatMessageStore, runtime: &SlashRuntime, text: &str) -> bool {
+pub(crate) fn submit_slash_command_text(
+    store: &ChatMessageStore,
+    runtime: &SlashRuntime,
+    text: &str,
+) -> bool {
     let trimmed = text.trim();
     let Some(rest) = trimmed.strip_prefix('/') else {
         return false;
@@ -109,7 +113,11 @@ pub(crate) fn clear_session(
     turn_budgets.clear();
 }
 
-pub(crate) fn apply_plan_command(store: &ChatMessageStore, plan_mode_state: &Property<String>, args: &[&str]) {
+pub(crate) fn apply_plan_command(
+    store: &ChatMessageStore,
+    plan_mode_state: &Property<String>,
+    args: &[&str],
+) {
     let current = plan_mode_from_status(&plan_mode_state.get()).unwrap_or(PlanMode::Off);
     let next = match args {
         [] => Some(current.next()),

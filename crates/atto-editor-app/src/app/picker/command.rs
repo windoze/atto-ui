@@ -34,7 +34,11 @@ pub(crate) fn restore_command_palette_focus(desktop: &mut Desktop, state: &Arc<M
     }
 }
 
-pub(crate) fn open_command_palette(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppState>>) {
+pub(crate) fn open_command_palette(
+    desktop: &mut Desktop,
+    screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+) {
     if let Some(id) = state.lock().command_palette_window {
         if desktop.wm.window(id).is_some() {
             return;

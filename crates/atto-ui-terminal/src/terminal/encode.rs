@@ -263,7 +263,10 @@ pub(crate) fn is_keypad_event(event: KeyEvent) -> bool {
     event.state.contains(KeyEventState::KEYPAD) || matches!(event.code, KeyCode::KeypadBegin)
 }
 
-pub(crate) fn encode_application_keypad_key(code: KeyCode, mods: KeyModifiers) -> Option<&'static str> {
+pub(crate) fn encode_application_keypad_key(
+    code: KeyCode,
+    mods: KeyModifiers,
+) -> Option<&'static str> {
     if modifier_value(mods) != 1 {
         return None;
     }
@@ -292,7 +295,11 @@ pub(crate) fn encode_application_keypad_key(code: KeyCode, mods: KeyModifiers) -
     }
 }
 
-pub(crate) fn encode_cursor_key(screen: &vt100::Screen, suffix: char, mods: KeyModifiers) -> String {
+pub(crate) fn encode_cursor_key(
+    screen: &vt100::Screen,
+    suffix: char,
+    mods: KeyModifiers,
+) -> String {
     let mod_value = modifier_value(mods);
     if mod_value == 1 {
         if screen.application_cursor() {
@@ -305,7 +312,11 @@ pub(crate) fn encode_cursor_key(screen: &vt100::Screen, suffix: char, mods: KeyM
     }
 }
 
-pub(crate) fn encode_home_end_key(screen: &vt100::Screen, suffix: char, mods: KeyModifiers) -> String {
+pub(crate) fn encode_home_end_key(
+    screen: &vt100::Screen,
+    suffix: char,
+    mods: KeyModifiers,
+) -> String {
     let mod_value = modifier_value(mods);
     if mod_value == 1 {
         if screen.application_cursor() {

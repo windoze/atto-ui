@@ -12,7 +12,11 @@ pub(crate) struct TerminalPtyResize {
 }
 
 impl TerminalPtyResize {
-    pub(crate) fn new(master: Box<dyn portable_pty::MasterPty + Send>, rows: u16, cols: u16) -> Self {
+    pub(crate) fn new(
+        master: Box<dyn portable_pty::MasterPty + Send>,
+        rows: u16,
+        cols: u16,
+    ) -> Self {
         Self {
             master: Arc::new(Mutex::new(master)),
             last_size: Arc::new(Mutex::new((rows, cols))),

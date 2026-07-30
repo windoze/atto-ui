@@ -6,11 +6,11 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
 
+use crate::ComponentTarget;
 use crate::composable::EventResult;
 use crate::reactive::{DirtySignal, DirtySignalSet};
 use crate::runtime::{ComponentValue, Rect as RuntimeRect};
 use crate::wm::WindowId;
-use crate::ComponentTarget;
 
 use super::{buffer_to_string, crop_buffer};
 

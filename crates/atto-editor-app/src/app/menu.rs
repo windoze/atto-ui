@@ -2,7 +2,6 @@
 
 use super::*;
 
-
 pub(crate) fn build_menu(actions: EventQueue<AppAction>) -> MenuBar {
     MenuBar::new(vec![
         MenuSpec::new(

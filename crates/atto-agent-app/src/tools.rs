@@ -3,7 +3,6 @@
 
 use crate::*;
 
-
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedToolCall {
     pub(crate) tool_use: ToolUseBlock,
@@ -72,7 +71,10 @@ pub(crate) fn prepare_tool_call(
     }
 }
 
-pub(crate) fn tool_approval_request(tool_use: &ToolUseBlock, allow_project: bool) -> ApprovalRequest {
+pub(crate) fn tool_approval_request(
+    tool_use: &ToolUseBlock,
+    allow_project: bool,
+) -> ApprovalRequest {
     let mut options = vec![ApprovalOption::allow_once("allow_once", "Allow once")];
     if allow_project {
         options.push(ApprovalOption::allow_project(

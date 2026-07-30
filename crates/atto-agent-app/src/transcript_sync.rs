@@ -3,7 +3,11 @@
 
 use crate::*;
 
-pub(crate) fn append_thinking_delta(store: &ChatMessageStore, message_id: ChatMessageId, delta: &str) -> bool {
+pub(crate) fn append_thinking_delta(
+    store: &ChatMessageStore,
+    message_id: ChatMessageId,
+    delta: &str,
+) -> bool {
     if let Some(block_id) = thinking_block_id(store, message_id) {
         return store.append_text_delta(block_id, delta);
     }
@@ -48,7 +52,10 @@ pub(crate) fn append_thinking_delta(store: &ChatMessageStore, message_id: ChatMe
     }
 }
 
-pub(crate) fn thinking_block_id(store: &ChatMessageStore, message_id: ChatMessageId) -> Option<ChatBlockId> {
+pub(crate) fn thinking_block_id(
+    store: &ChatMessageStore,
+    message_id: ChatMessageId,
+) -> Option<ChatBlockId> {
     store
         .messages()
         .iter()

@@ -3,7 +3,10 @@
 
 use crate::*;
 
-pub(crate) fn spawn_mock_agent_turn(action_sender: mpsc::Sender<AppAction>, request: MockAgentTurnRequest) {
+pub(crate) fn spawn_mock_agent_turn(
+    action_sender: mpsc::Sender<AppAction>,
+    request: MockAgentTurnRequest,
+) {
     thread::spawn(move || {
         let mut stream = DeepSeekUiStream::new_with_plan_gate(
             request.branch,
@@ -101,7 +104,10 @@ pub(crate) async fn run_deepseek_agent_turn(
     }
 }
 
-pub(crate) fn send_stream_actions(action_sender: &mpsc::Sender<AppAction>, actions: Vec<AppAction>) -> bool {
+pub(crate) fn send_stream_actions(
+    action_sender: &mpsc::Sender<AppAction>,
+    actions: Vec<AppAction>,
+) -> bool {
     for action in actions {
         if action_sender.send(action).is_err() {
             return false;

@@ -16,7 +16,10 @@ pub(crate) enum CommandBlockTextKind {
     Output,
 }
 
-pub(crate) fn command_row_presentation(blocks: &[TerminalCommandBlock], row: usize) -> CommandRowPresentation {
+pub(crate) fn command_row_presentation(
+    blocks: &[TerminalCommandBlock],
+    row: usize,
+) -> CommandRowPresentation {
     let mut presentation = CommandRowPresentation::default();
     for block in blocks {
         if block.prompt_start == Some(row) {

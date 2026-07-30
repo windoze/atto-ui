@@ -20,7 +20,10 @@ pub(crate) fn process_document_symbol_picker_events(
     }
 }
 
-pub(crate) fn restore_document_symbol_picker_focus(desktop: &mut Desktop, state: &Arc<Mutex<AppState>>) {
+pub(crate) fn restore_document_symbol_picker_focus(
+    desktop: &mut Desktop,
+    state: &Arc<Mutex<AppState>>,
+) {
     let restore = {
         let mut s = state.lock();
         s.document_symbol_picker_window = None;

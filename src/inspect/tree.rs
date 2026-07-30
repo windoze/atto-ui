@@ -15,9 +15,7 @@ use crate::composable::Component;
 use crate::runtime::ComponentValue;
 use crate::wm::{Window, WindowId};
 
-use super::{
-    DesktopSnapshotNode, InspectNode, NodeKind, runtime_rect, short_type_name,
-};
+use super::{DesktopSnapshotNode, InspectNode, NodeKind, runtime_rect, short_type_name};
 
 // ---------------------------------------------------------------------------
 // InspectNode tree
