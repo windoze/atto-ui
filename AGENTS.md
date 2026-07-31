@@ -42,4 +42,5 @@
 - Commit messages use imperative present tense (examples in history: “Add …”, “Fix …”, “Implement …”).
 - Make small commits per bug/feature; each commit should pass `cargo test`.
 - PRs should include: what changed, how to test, and (for UI changes) a PTY buffer snippet or screenshot.
-- Update `TODO.md` for task completion records, and update `PLAN.md` only when phase-level sequencing or completion criteria change.
+- There is no active task-list file to update: the former `TODO.md` / `PLAN.md` were archived to `docs/archive/2026-07-24-scriptable/` when that phase closed.
+- Before committing, run `cargo test --workspace`, `cargo fmt --all -- --check`, and `cargo clippy --workspace --all-targets -- -D warnings` — CI enforces all three.

@@ -7,10 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Atto UI 是一个基于 Crossterm 和 Ratatui 构建的多窗口 TUI (Terminal User Interface) 应用框架,受 Turbo Vision 启发。它提供了完整的窗口管理系统、菜单栏、状态栏以及常用组件库。
 
 ### 项目规模
-- **Rust 源代码文件**: 333 个 (按 `rg --files -g '*.rs'` 统计)
-- **Rust 代码行数**: 约 147,800 行非空非 `//` 开头行 (粗略统计,含测试、示例、应用与绑定)
+规模数字容易过时,下面的命令是取当前值的方式,数字本身仅供量级参考 (截至 2026-08-01):
+
+- **Rust 源代码文件**: 384 个 (`rg --files -g '*.rs' | wc -l`)
+- **Rust 代码行数**: 约 150,700 行非空非 `//` 开头行 (粗略统计,含测试、示例、应用与绑定)
 - **测试框架**: 独立的 PTY 测试工具 crate `atto-ui-test-host`,并补充进程内 introspection / scriptable 断言路径
-- **工作区 Crates**: `atto-ui-test-host` (测试框架),`atto-ui-async`,`atto-ui-macros` (过程宏),`atto-ui-chat`,`atto-ui-components`,`atto-ui-markdown`,`atto-ui-editor`,`atto-ui-terminal`,`atto-ui-python`,`atto-ui-node`,`atto-ui-file-tree`,`atto-agent-app`,`atto-editor-app`
+- **工作区 Crates** (14 个,见 `Cargo.toml` 的 `[workspace] members`): `atto-ui-test-host` (测试框架),`atto-ui-async`,`atto-ui-macros` (过程宏),`atto-ui-chat`,`atto-ui-components`,`atto-ui-markdown`,`atto-ui-editor`,`atto-ui-terminal`,`atto-ui-python`,`atto-ui-node`,`atto-ui-file-tree`,`atto-agent-app`,`atto-editor-app`,`atm` (tmux 兼容 CLI)
 - **JavaScript packages**: `packages/core` (`@atto-ui/core`) 与 `packages/react` (`@atto-ui/react`)
 
 ## 常用命令
@@ -89,7 +91,7 @@ cargo fmt
 
 ### 2. Window Manager 层 (`src/wm/`)
 - **`window.rs`**: 定义 `Window` 结构,包含窗口装饰(标题栏、边框、控件按钮、阴影)
-- **`manager.rs`**: `WindowManager` 管理多个窗口的生命周期、Z 序、焦点和布局
+- **`manager/`**: `WindowManager` 管理多个窗口的生命周期、Z 序、焦点和布局 (已按 `core` / `events` / `draw` / `focus` / `placement` / `docking` / `chrome` / `z_order` 拆分)
 - 支持窗口类型: Normal, Modal, Tooltip, Floating
 - 支持窗口状态: Normal, Minimized, Maximized
 - 处理窗口拖动、调整大小、最小化/最大化/关闭等操作
@@ -153,18 +155,21 @@ cargo fmt
    - `snapshot_virtual_scroll_app.rs` - 虚拟滚动测试应用 (测试委托驱动的内容渲染)
    - 这些测试应用被集成测试调用,运行在 PTY 中
 
-3. **Integration Tests** (`tests/`, 11 个测试文件):
-   - `pty_desktop.rs` - 测试桌面、菜单、窗口管理
-   - `pty_modal.rs` - 测试模态对话框
-   - `pty_mouse_support.rs` - 测试鼠标交互
-   - `pty_scrolling.rs` - 测试垂直滚动功能 (键盘、鼠标滚轮、滚动条拖动)
-   - `pty_horizontal_scrolling.rs` - 测试水平滚动功能
-   - `pty_virtual_scrolling.rs` - 测试虚拟滚动功能 (委托驱动的大规模数据渲染)
-   - `pty_view_hierarchy.rs` - 测试视图层次和布局容器
-   - `composable_primitives.rs` - 测试基础组件 (Text, Divider, Spacer)
-   - `composable_vstack.rs` - 测试 VStack 布局
-   - `macro_reactive.rs` - 测试反应式宏 (#[reactive])
-   - `macro_view_builder.rs` - 测试视图构建宏 (#[view_builder])
+3. **Integration Tests** (`tests/`,31 个测试文件;下游 crate 另有各自的 `tests/`)。
+   完整清单以 `ls tests/*.rs` 为准,主要几组:
+   - **桌面 / 窗口**: `pty_desktop.rs`(桌面、菜单、窗口管理)、`pty_modal.rs`(模态对话框)、
+     `pty_status_bar.rs`、`pty_notifications_windowing_multimodal.rs`、`pty_wide_overlap.rs`(宽字符重叠)
+   - **输入**: `pty_mouse_support.rs`、`pty_event_order.rs`(事件分发顺序)、
+     `pty_drag_drop.rs`、`pty_clipboard.rs`、`pty_textbox_selection.rs`
+   - **滚动**: `pty_scrolling.rs`(垂直:键盘 / 滚轮 / 滚动条拖动)、`pty_horizontal_scrolling.rs`、
+     `pty_virtual_scrolling.rs`(委托驱动的大规模数据渲染)、`pty_foreach_window_scrollbars.rs`、
+     `pty_splitter_scrollbars.rs`
+   - **控件**: `pty_core_widgets_t19.rs`、`pty_disclosure.rs`、`pty_typeahead.rs`、
+     `pty_rich_text.rs`、`pty_styled_label.rs`、`pty_tab_overflow.rs`、`pty_foreach.rs`
+   - **布局 / 组件**: `pty_view_hierarchy.rs`、`composable_primitives.rs`、`composable_vstack.rs`
+   - **宏**: `macro_reactive.rs`(`#[reactive]`)、`macro_view_builder.rs`(`view_builder!`)
+   - **框架 / 控制平面**: `pty_apphost_api.rs`、`pty_test_host_api.rs`、`pty_async_actions.rs`、
+     `atto_cli.rs`(外部 `atto` CLI)
 
 测试模式:
 ```rust
@@ -192,24 +197,28 @@ assert!(screen.contains("Expected"));
 
 ## 开发流程
 
-根据 README.md 的说明,开发应遵循以下流程:
+当前仓库根目录**没有** `TODO.md` / `PLAN.md`:它们已随脚本化阶段收尾归档到
+`docs/archive/2026-07-24-scriptable/`。没有活跃的任务清单文件,任务范围由每次对话的需求确定。
 
-1. 查看 `TODO.md` 获取当前任务顺序、依赖、验收要求和完成记录;`PLAN.md` 只记录阶段级计划。
-2. 按照 `TODO.md` 中第一个未完成任务逐步实现功能。
+开发流程:
+
+1. 明确本次任务范围;需要历史背景时查阅 `docs/` 与 `docs/archive/` 下的相关文档。
+2. 实现功能。
 3. 为每个任务编写充分测试:逻辑 / 状态优先用进程内 introspection / scriptable 断言,渲染和端到端行为继续使用 PTY 测试框架。
-4. 完成任务后在 `TODO.md` 中把任务标题标为 `[DONE]` 并补完成记录;仅当阶段级计划变化时更新 `PLAN.md`。
+4. 提交前跑 `cargo test --workspace`、`cargo fmt --all -- --check`、
+   `cargo clippy --workspace --all-targets -- -D warnings`(CI 以这三项为准,clippy 带 `-D warnings`)。
 5. 使用有意义的提交信息提交变更。
 
 ### 当前实现状态
 
-当前主线是脚本化 / introspection 控制平面,详见 `TODO.md`、`PLAN.md` 和 `SCRIPTING_LAYERS.md`。已完成的核心能力包括:
+脚本化 / introspection 控制平面已完成,分层设计见 `docs/SCRIPTING_LAYERS.md`。已完成的核心能力包括:
 
 - **第 1 层 introspection**:公共 `find_by_tag` / `find_by_tag_mut`,`DesktopInspector` 门面(可变句柄,读方法也会跑 layout/draw,非类型级只读)、属性名查询、tag 覆盖诊断、dirty change tracker。
 - **第 2 层 scriptable**:关键控件 `apply_command`,进程内 `query` / `invoke` / `wait_for`,以及测试侧 scriptable helper。
 - **第 3 层 IPC**:Unix socket + JSON-RPC 类协议,`ATTO_UI_SOCKET`,外部 `atto` CLI。
 - **第 4 层 tmux adapter**:tmux 环境注入、DCS passthrough、terminal pane IPC 方法、client-side `tmux` shim、本地 pane 方向导航 / resize / zoom / close。
 
-早期 M0-M7 终端 app 计划已归档到 `docs/archive/2026-07-12-terminal-app/`。`IMPLEMENTATION_PLAN.md` / `SWIFTUI_STYLE_REFACTOR.md` 仍可作为历史设计资料参考,但 routine 任务执行不再以它们为准。
+早期 M0-M7 终端 app 计划已归档到 `docs/archive/2026-07-12-terminal-app/`。`docs/archive/IMPLEMENTATION_PLAN.md` 仍可作为历史设计资料参考,但 routine 任务执行不再以它为准。
 
 ## 声明式 API (SwiftUI 风格)
 
@@ -363,7 +372,7 @@ VStack::new()
 - 基于 PTY 的集成测试框架
 - 屏幕缓冲区快照测试
 - 模拟键盘、鼠标、粘贴等所有交互
-- 11 个综合集成测试套件
+- 核心库 31 个集成测试套件,下游 crate 另有各自的测试
 
 ### 5. 现代 UI 范式
 - SwiftUI 风格的声明式 API
@@ -379,11 +388,16 @@ VStack::new()
 
 ## 文档资源
 
-- **TODO.md** - 当前任务顺序、验收要求、依赖和完成记录
-- **PLAN.md** - 当前阶段级计划和完成标准
-- **SCRIPTING_LAYERS.md** - 脚本化 / introspection 控制平面分层设计与最终决策
-- **docs/archive/2026-07-12-terminal-app/** - 已归档的全功能多窗口终端 app 阶段资料
-- **SWIFTUI_STYLE_REFACTOR.md** - SwiftUI 风格重构历史设计文档
-- **IMPLEMENTATION_PLAN.md** - 历史开发里程碑资料
+根目录只有 `README.md`、`CLAUDE.md`、`AGENTS.md` 及少量 editor-core 说明;其余文档都在 `docs/` 下。
+
 - **README.md** - 项目概述和快速开始
 - **AGENTS.md** - 代理工具使用说明
+- **docs/SCRIPTING_LAYERS.md** - 脚本化 / introspection 控制平面分层设计与最终决策
+- **docs/DESIGN_REVIEW.md** - 核心库设计审查报告 (2026-07-23)
+- **docs/RUNTIME_SINGLE_SOURCE_OF_TRUTH.md** - 动态组件树的真值归属约定
+- **docs/ASYNC.md** / **docs/ASYNC_TASKS.md** - 异步与任务模型
+- **docs/NODE_API.md** / **docs/REACT_GETTING_STARTED.md** / **docs/REACT_COOKBOOK.md** - JS / React 绑定
+- **docs/TUI_AGENT.md** / **docs/AGENT_GAP.md** / **docs/TERMINAL_GAP.md** / **docs/CHAT_UI.md** - 领域 app 设计与差距分析
+- **docs/RELEASE.md** - 发布流程
+- **docs/archive/** - 已完成阶段的计划与历史设计资料 (含 `2026-07-24-scriptable/` 的 `TODO.md` / `PLAN.md`、
+  `2026-07-12-terminal-app/`、`IMPLEMENTATION_PLAN.md` 等)
