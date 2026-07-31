@@ -74,6 +74,9 @@ struct PendingWait {
     poll_interval: Duration,
     next_poll: Instant,
     polls: u64,
+    /// Whether the condition's target has resolved on any poll so far, used to tell a wrong
+    /// tag apart from a condition that is merely still unmet.
+    target_resolved: bool,
     response_tx: mpsc::Sender<ProtocolResponse>,
 }
 
@@ -206,6 +209,7 @@ impl IpcServer {
             poll_interval,
             next_poll: now,
             polls: 0,
+            target_resolved: false,
             response_tx,
         };
 
@@ -499,7 +503,11 @@ fn protocol_method_name(method: &ProtocolMethod) -> &'static str {
 
 fn poll_wait_once(desktop: &mut Desktop, wait: &mut PendingWait) -> Option<ProtocolResponse> {
     wait.polls += 1;
-    let poll = DesktopInspector::new(desktop).poll_wait_condition(wait.screen, &wait.condition);
+    let poll = DesktopInspector::new(desktop).poll_wait_condition_tracked(
+        wait.screen,
+        &wait.condition,
+        &mut wait.target_resolved,
+    );
     match poll {
         Ok(Some(value)) => Some(ProtocolResponse::success(
             wait.id.clone(),
@@ -512,10 +520,11 @@ fn poll_wait_once(desktop: &mut Desktop, wait: &mut PendingWait) -> Option<Proto
             if Instant::now() >= wait.deadline {
                 Some(ProtocolResponse::error(
                     wait.id.clone(),
-                    ComponentError::timeout(format!(
-                        "condition not met after {} polls: {:?}",
-                        wait.polls, wait.condition
-                    )),
+                    DesktopInspector::wait_timeout_error(
+                        &wait.condition,
+                        wait.polls,
+                        wait.target_resolved,
+                    ),
                 ))
             } else {
                 None

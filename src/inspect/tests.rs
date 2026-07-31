@@ -503,6 +503,98 @@ fn wait_for_property_equals_times_out_without_hanging() {
         .expect_err("wait_for should time out");
 
     assert!(matches!(err, ComponentError::Timeout(_)));
+    let ComponentError::Timeout(message) = &err else {
+        unreachable!()
+    };
+    assert!(
+        message.contains("condition not met"),
+        "a real timeout on a live component should report the condition, got: {message}"
+    );
+}
+
+/// A wrong tag would otherwise poll to the deadline and surface as an ordinary timeout, which reads
+/// as "the UI is slow" and sends the reader looking in the wrong place. The target never resolving
+/// once is a distinguishable, and much more likely, explanation.
+#[test]
+fn wait_for_unknown_target_reports_it_was_never_found() {
+    let screen = Rect::new(0, 0, 80, 24);
+    let menu = MenuBar::new(vec![]);
+    let mut desktop = Desktop::new(Theme::dark(), menu);
+
+    let view = Label::new("pending").tag("status");
+    let window = Window::new(
+        WindowKind::Normal,
+        "Status",
+        Rect::new(1, 1, 30, 6),
+        Box::new(view),
+    );
+    desktop.add_window(window, screen);
+
+    let err = desktop
+        .inspect()
+        .wait_for_with_interval(
+            screen,
+            WaitCondition::property_equals(
+                // Note the typo: the live component is tagged `status`.
+                ComponentTarget::Id("staus".to_string()),
+                "text",
+                ComponentValue::String("pending".to_string()),
+            ),
+            Duration::from_millis(20),
+            Duration::from_millis(1),
+        )
+        .expect_err("wait_for should fail for an unknown target");
+
+    let ComponentError::Timeout(message) = &err else {
+        panic!("expected a timeout error, got {err:?}");
+    };
+    assert!(
+        message.contains("never found"),
+        "expected a never-found diagnostic, got: {message}"
+    );
+}
+
+/// A missing target must stay non-fatal while polling: waiting for a component that has not been
+/// created yet is a legitimate use, so the condition has to keep polling rather than fail on the
+/// first miss.
+#[test]
+fn wait_for_succeeds_when_target_appears_after_polling_starts() {
+    let screen = Rect::new(0, 0, 80, 24);
+    let menu = MenuBar::new(vec![]);
+    let mut desktop = Desktop::new(Theme::dark(), menu);
+
+    let text = Binding::new("pending".to_string());
+    let view = Label::new(text.clone()).tag("status");
+    let window = Window::new(
+        WindowKind::Normal,
+        "Status",
+        Rect::new(1, 1, 30, 6),
+        Box::new(view),
+    );
+    desktop.add_window(window, screen);
+
+    let writer = text.clone();
+    let handle = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(10));
+        writer.set("ready".to_string());
+    });
+
+    let result = desktop
+        .inspect()
+        .wait_for_with_interval(
+            screen,
+            WaitCondition::property_equals(
+                ComponentTarget::Id("status".to_string()),
+                "text",
+                ComponentValue::String("ready".to_string()),
+            ),
+            Duration::from_secs(2),
+            Duration::from_millis(1),
+        )
+        .expect("wait_for should observe the later change");
+
+    handle.join().expect("writer thread");
+    assert!(result.polls >= 1);
 }
 
 #[test]

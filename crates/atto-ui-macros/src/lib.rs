@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Procedural macros for Atto-UI.
 //!
 //! This crate is intentionally small: it provides optional ergonomics on top of Atto-UI's

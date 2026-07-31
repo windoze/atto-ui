@@ -213,13 +213,16 @@ impl<'a> DesktopInspector<'a> {
             .unwrap_or_else(Instant::now);
         let mut tracker = self.change_tracker();
         let mut polls = 0;
+        let mut target_resolved = false;
 
         loop {
             draw_desktop(self.desktop, screen)?;
             self.refresh_change_tracker(&mut tracker);
             polls += 1;
 
-            if let Some(value) = self.evaluate_wait_condition(&condition)? {
+            if let Some(value) =
+                self.evaluate_wait_condition_tracked(&condition, &mut target_resolved)?
+            {
                 return Ok(WaitResult {
                     polls,
                     value: Some(value),
@@ -227,22 +230,25 @@ impl<'a> DesktopInspector<'a> {
             }
 
             if Instant::now() >= deadline {
-                return Err(ComponentError::timeout(format!(
-                    "condition not met after {polls} polls: {condition:?}"
-                )));
+                return Err(Self::wait_timeout_error(&condition, polls, target_resolved));
             }
 
             sleep_until_next_wait_poll(deadline, poll_interval, &mut tracker);
         }
     }
 
-    pub(crate) fn poll_wait_condition(
+    /// Polls a wait condition once, recording whether the target resolved.
+    ///
+    /// The IPC server drives its waits one poll at a time, so it accumulates this flag across polls
+    /// to produce the same "never found" diagnostic as the in-process loop.
+    pub(crate) fn poll_wait_condition_tracked(
         &mut self,
         screen: Rect,
         condition: &WaitCondition,
+        target_resolved: &mut bool,
     ) -> Result<Option<ComponentValue>, ComponentError> {
         draw_desktop(self.desktop, screen)?;
-        self.evaluate_wait_condition(condition)
+        self.evaluate_wait_condition_tracked(condition, target_resolved)
     }
 
     pub fn wait_for_predicate<F>(
@@ -279,9 +285,14 @@ impl<'a> DesktopInspector<'a> {
         }
     }
 
-    fn evaluate_wait_condition(
+    /// Evaluates a wait condition, recording in `target_resolved` whether the target existed.
+    ///
+    /// A missing target is not an error here: callers legitimately wait for a component that has not
+    /// been created yet. But it is worth distinguishing on timeout — see [`Self::wait_timeout_error`].
+    fn evaluate_wait_condition_tracked(
         &mut self,
         condition: &WaitCondition,
+        target_resolved: &mut bool,
     ) -> Result<Option<ComponentValue>, ComponentError> {
         match condition {
             WaitCondition::PropertyEquals {
@@ -289,11 +300,40 @@ impl<'a> DesktopInspector<'a> {
                 property,
                 expected,
             } => match self.query(target.clone(), property) {
-                Ok(value) if value == *expected => Ok(Some(value)),
-                Ok(_) | Err(ComponentError::NotFound(_)) => Ok(None),
+                Ok(value) => {
+                    *target_resolved = true;
+                    if value == *expected {
+                        Ok(Some(value))
+                    } else {
+                        Ok(None)
+                    }
+                }
+                Err(ComponentError::NotFound(_)) => Ok(None),
                 Err(err) => Err(err),
             },
         }
+    }
+
+    /// Builds the timeout error for an unmet wait condition.
+    ///
+    /// When the target never resolved even once, the likely cause is a wrong tag rather than a slow
+    /// UI. Reporting that plainly keeps a typo from presenting as an ordinary timeout, which
+    /// otherwise reads as "the app is slow" and costs real time to chase down.
+    pub(crate) fn wait_timeout_error(
+        condition: &WaitCondition,
+        polls: u64,
+        target_resolved: bool,
+    ) -> ComponentError {
+        if target_resolved {
+            return ComponentError::timeout(format!(
+                "condition not met after {polls} polls: {condition:?}"
+            ));
+        }
+        let WaitCondition::PropertyEquals { target, .. } = condition;
+        ComponentError::timeout(format!(
+            "target {target:?} was never found during {polls} polls; \
+             check the tag/selector — the condition was never evaluated against a live component"
+        ))
     }
 
     fn invoke_by_id(
