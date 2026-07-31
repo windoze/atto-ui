@@ -115,8 +115,13 @@ pub fn prop_usize(spec: &ComponentSpec, name: &str) -> Result<Option<usize>, Tre
 
 pub fn prop_f64(spec: &ComponentSpec, name: &str) -> Result<Option<f64>, TreeError> {
     match spec.props.get(name) {
+        // Non-finite floats are rejected here for the same reason `expect_f64` rejects them: they
+        // survive a JSON round-trip only in one direction. Keeping the build-time and set-time paths
+        // in agreement matters because a spec built from a rejected value would otherwise be
+        // reachable through `rebuild`.
         Some(value) => match value.as_f64() {
-            Some(v) => Ok(Some(v)),
+            Some(v) if v.is_finite() => Ok(Some(v)),
+            Some(_) => Err(invalid_prop(spec, name, "finite f64", value)),
             None => Err(invalid_prop(spec, name, "f64", value)),
         },
         None => Ok(None),

@@ -365,6 +365,13 @@ fn expect_bool(value: ComponentValue, name: &str) -> Result<bool, ComponentError
 
 fn expect_f64(value: ComponentValue, name: &str) -> Result<f64, ComponentError> {
     match value {
+        // Reject NaN/Inf at the boundary. `serde_json` encodes non-finite floats as `null`
+        // *without* erroring, and `null` then fails to deserialize back into an `f64`. Letting one
+        // in here means the write succeeds, the read-back succeeds, and the failure only surfaces
+        // as an opaque decode error in whatever process is on the far side of the IPC socket.
+        ComponentValue::F64(v) if !v.is_finite() => {
+            Err(ComponentError::invalid_value(name, "finite number"))
+        }
         ComponentValue::F64(v) => Ok(v),
         ComponentValue::I64(v) => Ok(v as f64),
         ComponentValue::U64(v) => Ok(v as f64),
@@ -406,5 +413,47 @@ fn expect_rect(value: ComponentValue, name: &str) -> Result<Rect, ComponentError
     match value {
         ComponentValue::Rect(v) => Ok(Rect::new(v.x, v.y, v.width, v.height)),
         _ => Err(ComponentError::invalid_value(name, "rect")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A non-finite float encodes to JSON `null` without error and then refuses to decode back into
+    /// an `f64`, so accepting one here would push the failure across the IPC boundary where its
+    /// cause is no longer visible. Reject it at the point of entry instead.
+    #[test]
+    fn f64_codec_rejects_non_finite_values() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let err = f64::from_component_value(ComponentValue::F64(bad), "value")
+                .expect_err("non-finite value must be rejected");
+            assert_eq!(
+                err,
+                ComponentError::invalid_value("value", "finite number"),
+                "unexpected error for {bad}"
+            );
+
+            assert!(
+                f32::from_component_value(ComponentValue::F64(bad), "value").is_err(),
+                "f32 codec must reject {bad} too"
+            );
+        }
+    }
+
+    #[test]
+    fn f64_codec_accepts_finite_values_and_integer_widening() {
+        assert_eq!(
+            f64::from_component_value(ComponentValue::F64(1.5), "value"),
+            Ok(1.5)
+        );
+        assert_eq!(
+            f64::from_component_value(ComponentValue::I64(-3), "value"),
+            Ok(-3.0)
+        );
+        assert_eq!(
+            f64::from_component_value(ComponentValue::U64(7), "value"),
+            Ok(7.0)
+        );
     }
 }

@@ -93,9 +93,13 @@ impl Slider {
         self
     }
 
+    /// The range as an ordered pair of finite bounds.
+    ///
+    /// Non-finite bounds are dropped to `0.0` so every value derived from this range (and therefore
+    /// every value the slider can hold) stays finite and serializable.
     fn normalized_range(&self) -> (f64, f64) {
-        let mut min = self.min.get();
-        let mut max = self.max.get();
+        let mut min = finite_or_zero(self.min.get());
+        let mut max = finite_or_zero(self.max.get());
         if max < min {
             std::mem::swap(&mut min, &mut max);
         }
@@ -104,6 +108,12 @@ impl Slider {
 
     fn clamp_value(&self, value: f64) -> f64 {
         let (min, max) = self.normalized_range();
+        // NaN compares false against both bounds, so an ordering-only clamp would pass it straight
+        // through and leave the slider holding a value it can never render or serialize. Collapse
+        // non-finite input to a bound instead: -Inf and NaN to `min`, +Inf to `max`.
+        if !value.is_finite() {
+            return if value == f64::INFINITY { max } else { min };
+        }
         if value < min {
             min
         } else if value > max {
@@ -121,6 +131,11 @@ impl Slider {
         }
         let steps = ((value - min) / step).round();
         let snapped = min + steps * step;
+        // `value` may be non-finite, and a non-finite `step` would poison `snapped` too; either way
+        // the arithmetic above can yield NaN/Inf, which the ordering checks below would pass through.
+        if !snapped.is_finite() {
+            return self.clamp_value(value);
+        }
         if snapped < min {
             min
         } else if snapped > max {
@@ -219,7 +234,19 @@ impl Component for Slider {
         if name == "progress" {
             return Some(ComponentValue::F64(self.progress()));
         }
-        self.__component_get_property(name)
+        // `value`, `min`, `max` and `step` are caller-supplied `Binding`s, so a non-finite float can
+        // arrive without passing through `set_property`. Normalize on the way out: every value this
+        // widget reports has to survive the JSON round-trip the IPC control plane performs on it.
+        match self.__component_get_property(name) {
+            Some(ComponentValue::F64(v)) if !v.is_finite() => {
+                Some(ComponentValue::F64(if name == "value" {
+                    self.clamp_value(v)
+                } else {
+                    finite_or_zero(v)
+                }))
+            }
+            other => other,
+        }
     }
 
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
@@ -328,6 +355,13 @@ impl EventHandling for Slider {
             _ => EventResult::ignored(),
         }
     }
+}
+
+/// Replaces a non-finite float with `0.0`.
+///
+/// Used on the slider's configured bounds so NaN/Inf can never enter the range arithmetic.
+fn finite_or_zero(value: f64) -> f64 {
+    if value.is_finite() { value } else { 0.0 }
 }
 
 crate::impl_component_default_traits!(Slider => Scrollable, DynamicTree);
@@ -507,5 +541,44 @@ mod tests {
         assert_f64_property(&slider, "value", 4.0);
         assert_f64_property(&slider, "progress", 0.4);
         assert!(callbacks.is_empty());
+    }
+
+    /// `serde_json` encodes non-finite floats as `null` without erroring, but `null` will not
+    /// deserialize back into an `f64`. A slider holding NaN therefore produces a response that
+    /// serializes fine and fails to decode on the far side of the IPC socket, so the value must be
+    /// rejected at the property boundary rather than stored.
+    #[test]
+    fn set_property_rejects_non_finite_values() {
+        let value = Binding::new(5.0);
+        let mut slider = Slider::new(0.0, 10.0, value.clone());
+
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(
+                slider
+                    .set_property("value", ComponentValue::F64(bad))
+                    .is_err(),
+                "expected {bad} to be rejected"
+            );
+        }
+
+        assert_eq!(value.get(), 5.0);
+        assert_f64_property(&slider, "value", 5.0);
+    }
+
+    /// Every value the slider exposes must survive a JSON round-trip, since that is exactly what the
+    /// IPC control plane does with it.
+    #[test]
+    fn exposed_properties_survive_json_round_trip_with_non_finite_bounds() {
+        let slider = Slider::new(f64::NAN, f64::INFINITY, Binding::new(f64::NAN));
+
+        for name in ["value", "progress", "min", "max", "step"] {
+            let Some(value) = slider.get_property(name) else {
+                continue;
+            };
+            let json = serde_json::to_string(&value).expect("serialize");
+            let back: ComponentValue = serde_json::from_str(&json)
+                .unwrap_or_else(|err| panic!("{name} did not round-trip ({json}): {err}"));
+            assert_eq!(back, value, "{name} changed across a round-trip");
+        }
     }
 }
