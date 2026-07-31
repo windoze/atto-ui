@@ -1,6 +1,6 @@
 //! Language-neutral runtime specs and tree operation primitives.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -419,10 +419,24 @@ pub struct CallbackInvocation {
     pub payload: Option<ComponentValue>,
 }
 
+/// Allocates callback ids, tracks which have been released, and queues invocations for the host.
+///
+/// Liveness lives here rather than in each language binding on purpose. A binding that forgets to
+/// filter released ids would keep delivering events for callbacks its host has already dropped, and
+/// that mistake is invisible from the binding's own code — so the registry that hands out the ids is
+/// the only place a fix applies to every binding at once.
+///
+/// Note this tracks *released* ids rather than registered ones. Ids do not all originate from
+/// [`Self::register`]: the Python binding constructs `CallbackId` directly from a Python integer, and
+/// a spec deserialized from JSON carries ids in its `events` map that this registry never issued.
+/// Treating "not registered" as "not live" would silently drop every one of those callbacks.
 #[derive(Clone, Default)]
 pub struct CallbackRegistry {
     next_id: Arc<AtomicU64>,
     queue: Arc<Mutex<VecDeque<CallbackInvocation>>>,
+    /// Ids explicitly released by the host. Ids are never reused, so this only ever grows with
+    /// genuine releases and an unknown id is treated as live.
+    released: Arc<Mutex<HashSet<CallbackId>>>,
 }
 
 impl CallbackRegistry {
@@ -435,7 +449,32 @@ impl CallbackRegistry {
         CallbackId(id)
     }
 
+    /// Releases a callback id so later emissions for it are dropped.
+    ///
+    /// Returns `true` if the id was live before this call. Also discards any invocations for it that
+    /// are already queued but not yet drained, so a release takes effect immediately rather than
+    /// letting one more event through.
+    pub fn release(&self, callback_id: CallbackId) -> bool {
+        let newly_released = self.released.lock().insert(callback_id);
+        if newly_released {
+            self.queue
+                .lock()
+                .retain(|invocation| invocation.callback_id != callback_id);
+        }
+        newly_released
+    }
+
+    /// Reports whether a callback id can still receive events.
+    ///
+    /// Ids this registry never issued count as live; see the type-level note.
+    pub fn is_live(&self, callback_id: CallbackId) -> bool {
+        !self.released.lock().contains(&callback_id)
+    }
+
     pub fn emit(&self, invocation: CallbackInvocation) {
+        if !self.is_live(invocation.callback_id) {
+            return;
+        }
         self.queue.lock().push_back(invocation);
     }
 

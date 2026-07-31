@@ -1109,3 +1109,62 @@ fn prop_edge_insets_matches_codec_for_all_input_shapes() {
         assert_eq!(via_build, want, "unexpected conversion for input {value:?}");
     }
 }
+
+#[test]
+fn callback_registry_drops_emissions_for_released_ids() {
+    let callbacks = CallbackRegistry::new();
+    let cb = callbacks.register();
+
+    assert!(callbacks.is_live(cb));
+    callbacks.emit_simple(cb, None, "click");
+    assert_eq!(callbacks.drain().len(), 1);
+
+    assert!(callbacks.release(cb));
+    assert!(!callbacks.is_live(cb));
+    assert!(
+        !callbacks.release(cb),
+        "releasing twice must report the id was already released"
+    );
+
+    callbacks.emit_simple(cb, None, "click");
+    assert!(
+        callbacks.drain().is_empty(),
+        "a released callback must not receive further events"
+    );
+}
+
+#[test]
+fn callback_registry_release_discards_already_queued_invocations() {
+    let callbacks = CallbackRegistry::new();
+    let kept = callbacks.register();
+    let released = callbacks.register();
+
+    callbacks.emit_simple(released, None, "click");
+    callbacks.emit_simple(kept, None, "click");
+    callbacks.release(released);
+
+    let drained = callbacks.drain();
+    assert_eq!(drained.len(), 1, "queued invocation must be discarded");
+    assert_eq!(drained[0].callback_id, kept);
+}
+
+/// Callback ids do not all come from `register`: the Python binding builds `CallbackId` straight from
+/// a Python integer, and a spec deserialized from JSON carries ids this registry never issued. If
+/// liveness were tracked as "was registered" instead of "was released", every such callback would be
+/// dropped without a trace.
+#[test]
+fn callback_registry_treats_unissued_ids_as_live() {
+    let callbacks = CallbackRegistry::new();
+    let foreign = CallbackId(4242);
+
+    assert!(callbacks.is_live(foreign));
+    callbacks.emit_simple(foreign, Some("btn".into()), "click");
+
+    let drained = callbacks.drain();
+    assert_eq!(
+        drained.len(),
+        1,
+        "externally-allocated id must still deliver"
+    );
+    assert_eq!(drained[0].callback_id, foreign);
+}

@@ -416,6 +416,15 @@ class App:
         self._callbacks[callback_id] = callback
         return callback_id
 
+    def release_callback(self, callback_id: int) -> bool:
+        """Release a callback so it stops receiving events.
+
+        Callback ids are live until released, so dropping only the Python-side handler would leave
+        the Rust runtime queueing invocations for it. Returns True if the callback was registered.
+        """
+        self._native.release_callback(callback_id)
+        return self._callbacks.pop(callback_id, None) is not None
+
     def add_dynamic_window(
         self,
         title: str,

@@ -213,6 +213,8 @@ impl AppHost {
         let callbacks = self.callbacks.drain();
         let mut out = Vec::new();
         for event in &callbacks {
+            // Released ids are already dropped by the registry; this additionally skips ids that
+            // never had a JS handle allocated, which could not be represented in the JSON payload.
             if !self.callback_handles.contains_id(event.callback_id) {
                 continue;
             }
@@ -234,7 +236,11 @@ impl AppHost {
     /// Release a callback id handle after its component event binding is removed.
     #[napi]
     pub fn release_callback(&mut self, callback_id: String) -> napi::Result<bool> {
+        let id = self.callback_handles.resolve(&callback_id)?;
         self.callback_handles.release_handle(&callback_id)?;
+        // Release in the registry too, so pending invocations are dropped at the source rather than
+        // only being filtered out of `drain_callbacks`.
+        self.callbacks.release(id);
         Ok(true)
     }
 

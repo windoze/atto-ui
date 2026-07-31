@@ -113,6 +113,19 @@ impl PyAppHost {
         Ok(list.into_any().unbind())
     }
 
+    /// Allocate a callback id for use in component event bindings.
+    fn alloc_callback(&mut self) -> u64 {
+        self.callbacks.register().0
+    }
+
+    /// Release a callback id once its event binding is gone.
+    ///
+    /// Without this, a Python host that dropped its handler kept receiving invocations for it, since
+    /// ids are otherwise live forever. Returns `True` if the id was live before this call.
+    fn release_callback(&mut self, callback_id: u64) -> bool {
+        self.callbacks.release(CallbackId(callback_id))
+    }
+
     fn send_event(
         &mut self,
         py: Python<'_>,
