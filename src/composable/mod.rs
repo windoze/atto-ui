@@ -8,7 +8,7 @@ mod drag;
 mod find;
 mod focus_container;
 mod for_each;
-mod geom;
+pub(crate) mod geom;
 mod grid;
 mod identifiable;
 mod layout;

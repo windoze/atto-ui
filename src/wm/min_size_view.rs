@@ -12,8 +12,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::composable::scroll::{clamp_scroll_offset, scroll_offset_for_input_event};
 use crate::composable::{
     Component, ComponentContext, ComponentId, ComponentNode, DragOffer, DragSource, DropFeedback,
-    DynamicTree, EventHandling, EventResult, FocusNav, Layout, MouseCoordinateSpace, ScrollConfig,
-    ScrollOffset, Scrollable, TitleBarContent, TitleBarContext,
+    DynamicTree, EventHandling, EventResult, FocusNav, Layout, ScrollConfig, ScrollOffset,
+    Scrollable, TitleBarContent, TitleBarContext,
 };
 use crate::reactive::{Binding, DirtySignal};
 use crate::wm::WindowMinSizeMode;
@@ -115,33 +115,8 @@ impl Backend for OffscreenBackend {
     }
 }
 
-fn contains(rect: Rect, x: u16, y: u16) -> bool {
-    rect.width > 0
-        && rect.height > 0
-        && x >= rect.x
-        && x < rect.x.saturating_add(rect.width)
-        && y >= rect.y
-        && y < rect.y.saturating_add(rect.height)
-}
-
-fn mouse_coords_local_to_area(
-    area: Rect,
-    m: MouseEvent,
-    coordinate_space: MouseCoordinateSpace,
-) -> Option<(u16, u16)> {
-    match coordinate_space {
-        MouseCoordinateSpace::Absolute => contains(area, m.column, m.row).then(|| {
-            (
-                m.column.saturating_sub(area.x),
-                m.row.saturating_sub(area.y),
-            )
-        }),
-        MouseCoordinateSpace::Local => {
-            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
-                .then_some((m.column, m.row))
-        }
-    }
-}
+// Single implementation lives in `composable::geom`; see the note in `widgets::util`.
+use crate::composable::geom::mouse_coords_local_to_area;
 
 fn fill_buffer(buf: &mut Buffer, style: Style) {
     for cell in buf.content.iter_mut() {
@@ -167,6 +142,13 @@ pub(crate) struct WindowMinSizeView {
     scroll: ScrollOffset,
     last_area: Option<Rect>,
     scroll_config: ScrollConfig,
+    /// Reused offscreen render target for overflow drawing.
+    ///
+    /// Overflow renders the inner view at its full minimum size and copies the visible window out of
+    /// it, which needs a buffer every frame. Allocating a fresh `Terminal` per frame put a heap
+    /// allocation of the whole content area on the redraw path; keeping it here means steady-state
+    /// scrolling reuses one buffer and only reallocates when the content size actually changes.
+    overflow_terminal: Option<Terminal<OffscreenBackend>>,
 }
 
 impl WindowMinSizeView {
@@ -180,6 +162,7 @@ impl WindowMinSizeView {
             scroll: ScrollOffset::ZERO,
             last_area: None,
             scroll_config: ScrollConfig::default(),
+            overflow_terminal: None,
         }
     }
 
@@ -235,9 +218,25 @@ impl WindowMinSizeView {
             drag: ctx.drag,
         };
 
-        let backend =
-            OffscreenBackend::new(content_w.max(1), content_h.max(1), ctx.theme.window_bg);
-        let mut terminal = Terminal::new(backend).expect("offscreen terminal");
+        let buffer_size = Size::new(content_w.max(1), content_h.max(1));
+        let fill_style = ctx.theme.window_bg;
+        // Reuse the cached target when it still matches the requested size and fill; otherwise build
+        // a new one. Either way the buffer is reset below, so no state carries between frames.
+        let reusable = self.overflow_terminal.as_ref().is_some_and(|terminal| {
+            let backend = terminal.backend();
+            backend.buffer().area.as_size() == buffer_size && backend.fill_style == fill_style
+        });
+        if !reusable {
+            let backend = OffscreenBackend::new(buffer_size.width, buffer_size.height, fill_style);
+            self.overflow_terminal = Some(Terminal::new(backend).expect("offscreen terminal"));
+        }
+        let terminal = self
+            .overflow_terminal
+            .as_mut()
+            .expect("offscreen terminal initialized above");
+        // A reused buffer still holds the previous frame; clear it so stale cells cannot show
+        // through where the inner view draws nothing.
+        terminal.backend_mut().clear().expect("offscreen clear");
         terminal
             .try_draw(|f| {
                 self.inner
@@ -586,5 +585,129 @@ impl EventHandling for WindowMinSizeView {
             }
             Some(WindowMinSizeMode::Enforce) | None => self.inner.handle_event(event, ctx),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::backend::TestBackend;
+    use ratatui::text::Line;
+    use ratatui::widgets::Paragraph;
+
+    use super::*;
+    use crate::composable::{MouseCoordinateSpace, ScrollbarHost, TabMode};
+    use crate::theme::Theme;
+    use crate::wm::WindowId;
+
+    /// Draws a caller-controlled set of lines and reports a minimum size larger than the viewport it
+    /// will be given, so `WindowMinSizeView` takes the offscreen overflow path.
+    struct TextView {
+        lines: Vec<String>,
+        min: (u16, u16),
+    }
+
+    impl Component for TextView {
+        fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
+            let lines: Vec<Line<'_>> = self.lines.iter().map(|l| Line::raw(l.clone())).collect();
+            frame.render_widget(Paragraph::new(lines), area);
+        }
+    }
+
+    impl Layout for TextView {
+        fn min_width(&self) -> u16 {
+            self.min.0
+        }
+
+        fn min_height(&self) -> u16 {
+            self.min.1
+        }
+    }
+
+    crate::impl_component_default_traits!(TextView => Scrollable, FocusNav, DynamicTree, EventHandling);
+
+    fn render(view: &mut WindowMinSizeView, area: Rect, theme: &Theme) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).expect("term");
+        terminal
+            .draw(|frame| {
+                let ctx = ComponentContext {
+                    theme,
+                    window_id: WindowId::default(),
+                    is_focused: true,
+                    scrollbar_host: ScrollbarHost::Component,
+                    tab_mode: TabMode::Cycle,
+                    mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+                    drag: None,
+                };
+                view.draw(frame, area, ctx);
+            })
+            .expect("draw");
+        terminal.backend().buffer().clone()
+    }
+
+    fn row_text(buffer: &Buffer, row: u16, width: u16) -> String {
+        (0..width)
+            .map(|x| buffer.cell((x, row)).expect("cell").symbol().to_owned())
+            .collect()
+    }
+
+    /// The offscreen render target is cached across frames, so a shrinking inner view must not leave
+    /// the previous frame's glyphs behind in the reused buffer.
+    #[test]
+    fn overflow_redraw_does_not_leak_cells_from_the_previous_frame() {
+        let theme = Theme::dark();
+        let area = Rect::new(0, 0, 10, 3);
+        let mut view = WindowMinSizeView::new(
+            Box::new(TextView {
+                lines: vec!["WILLVANISH".to_string()],
+                min: (20, 6),
+            }),
+            Binding::new(WindowMinSizeMode::Clip),
+        );
+
+        let first = render(&mut view, area, &theme);
+        assert!(
+            row_text(&first, 0, area.width).contains("WILLVANISH"),
+            "expected the first frame to draw the text, got: {:?}",
+            row_text(&first, 0, area.width)
+        );
+
+        // Same content size, so the cached buffer is reused; the text is now gone.
+        view.inner = Box::new(TextView {
+            lines: vec![String::new()],
+            min: (20, 6),
+        });
+        let second = render(&mut view, area, &theme);
+        assert!(
+            !row_text(&second, 0, area.width).contains("WILLVANISH"),
+            "stale text leaked from the cached offscreen buffer: {:?}",
+            row_text(&second, 0, area.width)
+        );
+    }
+
+    /// A content-size change must rebuild the cached target rather than render into a stale geometry.
+    #[test]
+    fn overflow_reallocates_when_content_size_changes() {
+        let theme = Theme::dark();
+        let area = Rect::new(0, 0, 10, 3);
+        let mut view = WindowMinSizeView::new(
+            Box::new(TextView {
+                lines: vec!["FIRST".to_string()],
+                min: (20, 6),
+            }),
+            Binding::new(WindowMinSizeMode::Clip),
+        );
+
+        let _ = render(&mut view, area, &theme);
+        view.inner = Box::new(TextView {
+            lines: vec!["SECOND".to_string()],
+            min: (40, 12),
+        });
+        let after = render(&mut view, area, &theme);
+
+        assert!(
+            row_text(&after, 0, area.width).contains("SECOND"),
+            "expected the resized content to render, got: {:?}",
+            row_text(&after, 0, area.width)
+        );
     }
 }

@@ -14,6 +14,7 @@ use super::component::{
     Capture, Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
     MouseCoordinateSpace,
 };
+use super::geom::mouse_coords_local_to_area;
 use crate::reactive::Binding;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
@@ -166,7 +167,7 @@ impl EventHandling for Text {
                 match m.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
                         let Some((local_x, local_y)) =
-                            text_mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+                            mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
                         else {
                             return EventResult::ignored();
                         };
@@ -380,31 +381,15 @@ impl TextSelectionState {
     }
 }
 
-fn text_mouse_coords_local_to_area(
-    area: Rect,
-    m: crossterm::event::MouseEvent,
-    coordinate_space: MouseCoordinateSpace,
-) -> Option<(u16, u16)> {
-    match coordinate_space {
-        MouseCoordinateSpace::Absolute => (area.width > 0
-            && area.height > 0
-            && m.column >= area.x
-            && m.column < area.x.saturating_add(area.width)
-            && m.row >= area.y
-            && m.row < area.y.saturating_add(area.height))
-        .then(|| {
-            (
-                m.column.saturating_sub(area.x),
-                m.row.saturating_sub(area.y),
-            )
-        }),
-        MouseCoordinateSpace::Local => {
-            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
-                .then_some((m.column, m.row))
-        }
-    }
-}
-
+/// Clamps a mouse position into `area` instead of rejecting it when outside.
+///
+/// Used while a text selection drag is in flight: once the pointer has been captured the drag should
+/// keep extending the selection to the nearest valid position rather than stop updating when the
+/// pointer leaves the widget.
+///
+/// The bounds are deliberately asymmetric. `max_y` is a row *index*, so it stops at `height - 1`,
+/// while `max_x` is a caret *column* and `width` is a valid caret position — the caret sits after the
+/// last character on a full-width line.
 fn text_mouse_coords_clamped_to_area(
     area: Rect,
     m: crossterm::event::MouseEvent,

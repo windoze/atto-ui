@@ -1,10 +1,9 @@
 //! Shared helpers for built-in widgets.
 
-use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::Rect;
+use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEventKind};
 use ratatui::style::Style;
 
-use crate::composable::{EventResult, MouseCoordinateSpace, ScrollContainerHost};
+use crate::composable::{EventResult, ScrollContainerHost};
 use crate::reactive::Binding;
 use crate::runtime::{CallbackHandle, ComponentValue};
 use crate::theme::Theme;
@@ -52,16 +51,6 @@ pub(crate) fn widget_style(theme: &Theme, enabled: bool, focused: bool) -> Style
     }
 }
 
-/// Checks whether a terminal coordinate falls inside a non-empty rectangle.
-pub(crate) fn contains(rect: Rect, x: u16, y: u16) -> bool {
-    rect.width > 0
-        && rect.height > 0
-        && x >= rect.x
-        && x < rect.x.saturating_add(rect.width)
-        && y >= rect.y
-        && y < rect.y.saturating_add(rect.height)
-}
-
 /// Expands a border-mounted scrollbar across the outer edge when the inner span is too short to
 /// show arrow caps and at least one track cell.
 pub(crate) fn border_scrollbar_axis_span(
@@ -78,25 +67,10 @@ pub(crate) fn border_scrollbar_axis_span(
     }
 }
 
-/// Converts mouse coordinates from an explicit coordinate space to coordinates local to `area`.
-pub(crate) fn mouse_coords_local_to_area(
-    area: Rect,
-    m: MouseEvent,
-    coordinate_space: MouseCoordinateSpace,
-) -> Option<(u16, u16)> {
-    match coordinate_space {
-        MouseCoordinateSpace::Absolute => contains(area, m.column, m.row).then(|| {
-            (
-                m.column.saturating_sub(area.x),
-                m.row.saturating_sub(area.y),
-            )
-        }),
-        MouseCoordinateSpace::Local => {
-            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
-                .then_some((m.column, m.row))
-        }
-    }
-}
+// Hit testing is the core of interaction correctness, so it has a single implementation in
+// `composable::geom`. These re-exports keep widget call sites unchanged while ensuring no second
+// copy can drift away from it.
+pub(crate) use crate::composable::geom::{contains, mouse_coords_local_to_area};
 
 /// Shared selection and vertical scroll behavior for row-based widgets.
 #[derive(Clone, Debug, Default)]
